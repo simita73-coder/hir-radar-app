@@ -1,10 +1,12 @@
 import { registerPlugin } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
+import { splitTags, stripWrappers, canonToken, normalizeTags, unionTags } from './tags.js';
+import { createMerge } from './merge.js';
 
 // Saját natív plugin (android-extra/HrPlugin.java). A __MOCK_HR__ csak az automatikus tesztekhez van.
 const HR = window.__MOCK_HR__ || registerPlugin('HrNative');
 
-const VERSION = 'v5.0';
+const VERSION = 'v5.1';
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const errText = e => (e && (e.message || e.errorMessage)) || String(e);
@@ -24,7 +26,9 @@ document.title = 'Hír-Radar Mobil ' + VERSION;
 let radarOpen = false, triageOpen = false, triageNote = '';
 let allIds = [], idx = 0, cur = null;          // a lista csak sorazonosítókat (rowid) tárol, a cikk külön töltődik
 let viewMode = 'all';                          // all | prot | saved | read | del
-let rovat = 'MIND';
+// rovat-szűrő: kijelölt rovatok (vagy „kivéve” mód) + „csak új” kapcsoló
+const flt = { sel: new Set(), excl: false, onlyNew: false };
+const fltActive = () => flt.sel.size > 0 || flt.onlyNew;
 let sortMode = 'random';                       // random | desc | asc
 let lastAction = null, searchTimer = null, statsTimer = null;
 let renderTok = 0, statsTok = 0, listTok = 0, busy = false;
@@ -60,70 +64,6 @@ const run = (db, sql, params = []) => HR.run({ db, sql, params });
 const parseCsv = s => (s ? s.split(',').map(Number) : []);
 const rid = id => Math.trunc(Number(id));            // sorazonosító: egész szám, közvetlenül az SQL-be írható
 
-// ── címke-normalizálás (a tag_clean.py JS-átirata) ─────────────────────────────
-const WRAP_CHARS = '[]"“”„‟«»';
-function trimChars(s, chars) {
-  let a = 0, b = s.length;
-  while (a < b && chars.includes(s[a])) a++;
-  while (b > a && chars.includes(s[b - 1])) b--;
-  return s.slice(a, b);
-}
-function stripWrappers(t) {
-  t = t.trim();
-  for (;;) {
-    let n = trimChars(t.trim(), WRAP_CHARS).trim();
-    if (n.length > 2 && n[0] === "'" && n[n.length - 1] === "'" && n.split("'").length - 1 === 2) n = n.slice(1, -1).trim();
-    if (n === t) return n;
-    t = n;
-  }
-}
-function isAcronymShape(tok) {
-  if (!(tok.toUpperCase() === tok && tok.toLowerCase() !== tok)) return false;     // csupa nagybetű
-  const letters = (tok.match(/\p{L}/gu) || []).length;
-  return letters >= 2 || (letters >= 1 && /\d/.test(tok));
-}
-function canonToken(tok, cmap) {
-  const low = tok.toLowerCase();
-  if (cmap && Object.prototype.hasOwnProperty.call(cmap, low)) return cmap[low];
-  return isAcronymShape(tok) ? tok : low;
-}
-function splitTags(value) {
-  if (value == null) return [];
-  if (Array.isArray(value)) return value.filter(x => x != null).map(x => String(x).replace(/,/g, ' '));
-  const s = String(value).trim();
-  let items = null;
-  if (s.startsWith('[')) {
-    try { const v = JSON.parse(s); if (Array.isArray(v)) items = v.filter(x => x != null).map(String); } catch {
-      // Python-lista alak: ['a', 'b'] (csak ha az egész szöveg ilyen; különben sima vesszős lista)
-      if (/^\[\s*((?:'[^']*'|"[^"]*")\s*(?:,\s*(?:'[^']*'|"[^"]*")\s*)*,?\s*)?\]$/.test(s)) {
-        items = [...s.matchAll(/'([^']*)'|"([^"]*)"/g)].map(x => x[1] != null ? x[1] : x[2]);
-      }
-    }
-  }
-  if (items == null) return s.split(',');
-  return items.map(x => x.replace(/,/g, ' '));
-}
-function normalizeTags(value, cmap) {
-  const seen = new Set(), out = [];
-  for (const raw of splitTags(value)) {
-    let t = stripWrappers(raw.replace(/\s+/g, ' '));
-    if (!t) continue;
-    t = t.split(' ').map(tok => canonToken(tok, cmap)).join(' ');
-    const key = t.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key); out.push(t);
-  }
-  return out.join(', ');
-}
-// meglévő BM-címkékhez hozzáadja az újakat (a meglévőket nem írja át)
-function unionTags(existing, added) {
-  const base = String(existing || '').split(',').map(t => t.trim()).filter(Boolean);
-  const have = new Set(base.map(t => t.toLowerCase()));
-  for (const t of String(added || '').split(',').map(x => x.trim()).filter(Boolean)) {
-    if (!have.has(t.toLowerCase())) { have.add(t.toLowerCase()); base.push(t); }
-  }
-  return base.join(', ');
-}
 // opcionális tag_case_map.json (a BM tisztító készíti): a BM-mappában vagy a Hír-Radar mappában
 async function getCmap() {
   if (cmapCache) return cmapCache;
@@ -379,7 +319,13 @@ function searchFields() {
 function baseWhere(withMode = true) {
   const where = [], params = [];
   if (withMode) where.push(MODE_SQL[viewMode]);
-  if (rovat !== 'MIND') { where.push('source = ?'); params.push(rovat); }
+  if (flt.sel.size) {
+    const list = [...flt.sel];
+    const ph = list.map(() => '?').join(',');
+    where.push(`COALESCE(source, '') ${flt.excl ? 'NOT IN' : 'IN'} (${ph})`);
+    params.push(...list);
+  }
+  if (flt.onlyNew && viewMode === 'all') where.push("status = 'SEEN'");     // csak a ✨ listában: az el nem döntött cikkek
   return { where, params };
 }
 
@@ -457,7 +403,9 @@ const DEC_LABEL = { menteni: '💙 menteni', olvasni: '📖 olvasni', torolni: '
 
 function showEmpty() {
   $('card-content').style.display = 'none'; $('empty-state').style.display = 'flex';
-  $('empty-msg').innerHTML = radarOpen ? esc(EMPTY_MSGS[viewMode] || 'Nincs találat.') : 'Nincs adatbázis megnyitva.<br><br>Koppints a ⚙️ gombra az útvonalakhoz és az engedélyhez.';
+  $('empty-msg').innerHTML = radarOpen
+    ? esc(EMPTY_MSGS[viewMode] || 'Nincs találat.') + (fltActive() ? '<br><br>📁 Rovat-szűrő aktív – a 📁 gombbal kapcsolható ki.' : '')
+    : 'Nincs adatbázis megnyitva.<br><br>Koppints a ⚙️ gombra az útvonalakhoz és az engedélyhez.';
   $('stat-pos').textContent = '–';
   $('reason-input').value = '';
   ['act-prot', 'act-read', 'act-save', 'act-del'].forEach(i => $(i).classList.remove('on'));
@@ -556,28 +504,86 @@ function setMode(mode, focusId) {
 Object.entries(modeBtnMap).forEach(([m, id]) => { $(id).onclick = () => setMode(m); });
 
 // ── rovat szűrő ─────────────────────────────────────────────────────────────────
+// A névre koppintás: csak az a rovat (azonnal). A jelölőnégyzetekkel több rovat is választható → ✔ Alkalmaz.
+// „Kivéve”: a kijelölt rovatok kimaradnak. „Csak új”: a ✨ listában csak az el nem döntött (🟢) cikkek.
+let rovatRows = [], rovatDraft = new Set(), rovatSortAz = lsGet('hr_rovat_sort') === 'az';
+function paintRovatBtn() {
+  const b = $('btn-rovat'), n = flt.sel.size;
+  b.textContent = '📁' + (n ? n : (flt.onlyNew ? '●' : ''));
+  b.className = 'nb' + (!fltActive() ? '' : flt.excl && n ? ' on-amber' : ' on');
+  b.title = fltActive() ? 'Rovat-szűrő (aktív)' : 'Rovat-szűrő';
+}
+function clearRovat() { flt.sel.clear(); flt.excl = false; flt.onlyNew = false; paintRovatBtn(); }
+function rovatLabel(src) { return src === '' ? '(nincs rovat)' : src; }
+function renderRovatList() {
+  const needle = $('rovat-search').value.trim().toLocaleLowerCase('hu');
+  const rows = rovatRows.filter(r => !needle || rovatLabel(r.src).toLocaleLowerCase('hu').includes(needle));
+  rows.sort(rovatSortAz ? (a, b) => rovatLabel(a.src).localeCompare(rovatLabel(b.src), 'hu') : (a, b) => b.n - a.n);
+  const showNew = viewMode === 'all';
+  $('rovat-list').innerHTML = rows.length ? rows.map(r =>
+    `<div class="rovat-item${rovatDraft.has(r.src) ? ' on' : ''}" data-r="${esc(r.src)}">` +
+      `<span class="rv-box"><input type="checkbox" class="rv-chk"${rovatDraft.has(r.src) ? ' checked' : ''}></span>` +
+      `<span class="rv-name">${esc(rovatLabel(r.src))}</span>` +
+      `<span class="rovat-count">${fmt(r.n)}${showNew ? ` · 🟢${fmt(r.fresh)}` : ''}</span></div>`).join('')
+    : '<div class="rovat-item"><span>Nincs ilyen rovat.</span></div>';
+  paintRovatSum();
+}
+function paintRovatSum() {
+  const picked = rovatRows.filter(r => rovatDraft.has(r.src));
+  const tot = rovatRows.reduce((s, r) => s + r.n, 0), totNew = rovatRows.reduce((s, r) => s + r.fresh, 0);
+  const sel = picked.reduce((s, r) => s + r.n, 0), selNew = picked.reduce((s, r) => s + r.fresh, 0);
+  const excl = $('rovat-excl').checked, onlyNew = $('rovat-new').checked && viewMode === 'all';
+  const n = rovatDraft.size;
+  let cnt = n ? (excl ? tot - sel : sel) : tot, cntNew = n ? (excl ? totNew - selNew : selNew) : totNew;
+  const shown = onlyNew ? cntNew : cnt;
+  $('rovat-sum').textContent = (n ? `${n} rovat ${excl ? 'kivéve' : 'kijelölve'}` : 'Minden rovat') + ` → ${fmt(shown)} cikk` + (viewMode === 'all' && !onlyNew ? ` (ebből új: ${fmt(cntNew)})` : '');
+  $('rovat-apply').textContent = n ? `✔ Alkalmaz (${n})` : '✔ Alkalmaz';
+  $('rovat-sort-n').className = 'rv-sort' + (rovatSortAz ? '' : ' on');
+  $('rovat-sort-az').className = 'rv-sort' + (rovatSortAz ? ' on' : '');
+}
 $('btn-rovat').onclick = async () => {
   if (!radarOpen) { toast('⚠️ Nincs megnyitott adatbázis'); return; }
-  const list = $('rovat-list');
-  list.innerHTML = '<div class="rovat-item"><span>Betöltés…</span></div>';
+  rovatDraft = new Set(flt.sel);
+  $('rovat-excl').checked = flt.excl; $('rovat-new').checked = flt.onlyNew;
+  $('rovat-new-row').style.display = viewMode === 'all' ? '' : 'none';
+  $('rovat-search').value = '';
+  $('rovat-list').innerHTML = '<div class="rovat-item"><span>Betöltés…</span></div>';
+  $('rovat-sum').textContent = '';
   showModal('rovat-modal-overlay');
   try {
-    const rows = await q('radar', `SELECT source, COUNT(*) FROM memory WHERE ${MODE_SQL[viewMode]} GROUP BY source ORDER BY 2 DESC`);
-    const total = rows.reduce((s, r) => s + r[1], 0);
-    let html = `<div class="rovat-item${rovat === 'MIND' ? ' on' : ''}" data-r="MIND"><span>✨ Mind</span><span class="rovat-count">${fmt(total)}</span></div>`;
-    rows.forEach(([src, n]) => {
-      html += `<div class="rovat-item${rovat === src ? ' on' : ''}" data-r="${esc(src)}"><span>${esc(src || '(nincs rovat)')}</span><span class="rovat-count">${fmt(n)}</span></div>`;
-    });
-    list.innerHTML = html;
-  } catch (e) { list.innerHTML = `<div class="rovat-item"><span>❌ ${esc(errText(e))}</span></div>`; }
+    const rows = await q('radar', `SELECT COALESCE(source, ''), COUNT(*), SUM(CASE WHEN status = 'SEEN' THEN 1 ELSE 0 END) FROM memory WHERE ${MODE_SQL[viewMode]} GROUP BY 1`);
+    rovatRows = rows.map(([src, n, fresh]) => ({ src: String(src), n: n || 0, fresh: fresh || 0 }));
+    renderRovatList();
+  } catch (e) { $('rovat-list').innerHTML = `<div class="rovat-item"><span>❌ ${esc(errText(e))}</span></div>`; }
 };
+async function applyRovat(sel) {
+  flt.sel = new Set(sel); flt.excl = $('rovat-excl').checked; flt.onlyNew = $('rovat-new').checked;
+  closeModal('rovat-modal-overlay');
+  paintRovatBtn();
+  await loadRecords();
+  if (fltActive()) {
+    const names = [...flt.sel].map(rovatLabel);
+    const what = names.length === 0 ? '🟢 csak új' : names.length <= 2 ? names.join(', ') : `${names.length} rovat`;
+    toast(`📁 ${flt.excl && names.length ? 'Kivéve: ' : ''}${what} – ${fmt(allIds.length)} cikk`, 2500);
+  } else toast('📁 Minden rovat', 1800);
+}
 $('rovat-list').addEventListener('click', e => {
   const it = e.target.closest('.rovat-item'); if (!it || it.dataset.r == null) return;
-  rovat = it.dataset.r;
-  closeModal('rovat-modal-overlay');
-  $('btn-rovat').textContent = rovat === 'MIND' ? '📁' : '📁●';
-  loadRecords();
+  const src = it.dataset.r;
+  if (e.target.closest('.rv-box')) {                       // jelölőnégyzet: több rovat választása
+    if (rovatDraft.has(src)) rovatDraft.delete(src); else rovatDraft.add(src);
+    const on = rovatDraft.has(src);
+    it.classList.toggle('on', on); it.querySelector('.rv-chk').checked = on;
+    paintRovatSum();
+  } else applyRovat([src]);                                // név: csak ez a rovat, azonnal
 });
+$('rovat-search').addEventListener('input', renderRovatList);
+$('rovat-excl').addEventListener('change', paintRovatSum);
+$('rovat-new').addEventListener('change', paintRovatSum);
+$('rovat-sort-n').onclick = () => { rovatSortAz = false; lsSet('hr_rovat_sort', 'n'); renderRovatList(); };
+$('rovat-sort-az').onclick = () => { rovatSortAz = true; lsSet('hr_rovat_sort', 'az'); renderRovatList(); };
+$('rovat-apply').onclick = () => applyRovat(rovatDraft);
+$('rovat-clear').onclick = () => { rovatDraft = new Set(); $('rovat-excl').checked = false; $('rovat-new').checked = false; applyRovat([]); };
 
 // ── keresés ─────────────────────────────────────────────────────────────────────
 $('search-input').addEventListener('input', () => {
@@ -946,13 +952,23 @@ $('share-save-btn').onclick = async () => {
     closeModal('share-modal-overlay');
     toast(`✅ Hozzáadva (${status === 'READING' ? '📖' : '💙'})${note}`, 3000);
     lastAction = null; scheduleStats(0);
-    rovat = 'MIND'; $('btn-rovat').textContent = '📁';
+    clearRovat();
     $('search-input').value = ''; $('search-clear').style.display = 'none';
     await setMode('all', row);
   } catch (e) { toast('❌ ' + errText(e), 5000); }
 };
 window.__hrShare = handleShared;               // a teszteléshez
 try { HR.addListener('shared', handleShared); } catch { /* böngészőben nincs */ }
+
+// ── összevonás az asztali adatbázisokkal ───────────────────────────────────────
+const DEFAULT_MERGE_DIR = '/storage/emulated/0/Norbi/Osszevonas';
+const mergeUi = createMerge({
+  $, HR, q, qVal, run, toast, fmt, esc, errText, showModal, getPath, lsSet, lsDel, dirOf, pad, ensureBm,
+  defaultDir: DEFAULT_MERGE_DIR, mergeDir: () => lsGet('hr_path_merge', '') || DEFAULT_MERGE_DIR,
+  isRadarOpen: () => radarOpen, isTriageOpen: () => triageOpen,
+  onDone: async () => { allTagsCache = null; allTagsLoading = null; cmapCache = null; lastAction = null; await loadRecords(); scheduleStats(0); refreshDeletableCount(); },
+});
+$('merge-open-btn').onclick = () => mergeUi.open();
 
 // ── indulás ─────────────────────────────────────────────────────────────────────
 (async () => {
@@ -962,6 +978,7 @@ try { HR.addListener('shared', handleShared); } catch { /* böngészőben nincs 
   applyRows();
   applyColors(getStoredColors());
   paintSortButtons();
+  paintRovatBtn();
   paintSearchBtn();
   showEmpty();
   const d = await HR.getShared().catch(() => null);          // a megosztással indított app szövege

@@ -32,7 +32,8 @@ import java.util.Random;
  *    egyszerre több adatbázis is nyitva lehet (radar_memory.db, triage.db, bookmarks.db), névvel azonosítva,
  *  - azonosító-listák egyetlen szövegben (nagy táblákhoz), magyar ékezetes kisbetűs kereséssel,
  *  - webcím megnyitása az alapértelmezett böngészőben,
- *  - a böngészőből "Megosztás" menüvel érkező link fogadása.
+ *  - a böngészőből "Megosztás" menüvel érkező link fogadása,
+ *  - fájlmásolás / listázás / saját biztonsági másolat törlése (az összevonás előtti mentéshez).
  */
 @CapacitorPlugin(name = "HrNative")
 public class HrPlugin extends Plugin {
@@ -554,6 +555,107 @@ public class HrPlugin extends Plugin {
             }
             r.put("exists", true);
             call.resolve(r);
+        } catch (Exception e) {
+            call.reject(msg(e));
+        }
+    }
+
+    // ------------------------------------------------------------------ fájlok (biztonsági másolat az összevonás előtt)
+
+    /** Fájl másolása ideiglenes névre, majd átnevezéssel; a célmappát létrehozza, a szabad helyet ellenőrzi. */
+    @PluginMethod
+    public void copyFile(PluginCall call) {
+        File tmp = null;
+        try {
+            File src = new File(call.getString("src", ""));
+            File dst = new File(call.getString("dst", ""));
+            if (!src.isFile()) {
+                call.reject("A másolandó fájl nem található: " + src.getPath());
+                return;
+            }
+            if (dst.exists()) {
+                call.reject("A célfájl már létezik: " + dst.getPath());
+                return;
+            }
+            File parent = dst.getParentFile();
+            if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                call.reject("A mappa nem hozható létre: " + parent.getPath());
+                return;
+            }
+            if (parent != null && parent.getUsableSpace() < src.length() + 64L * 1024L * 1024L) {
+                call.reject("Nincs elég szabad hely a biztonsági másolathoz");
+                return;
+            }
+            tmp = new File(dst.getPath() + ".tmp");
+            java.io.FileInputStream in = new java.io.FileInputStream(src);
+            try {
+                java.io.FileOutputStream out = new java.io.FileOutputStream(tmp);
+                try {
+                    byte[] buf = new byte[1 << 16];
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                    }
+                    out.getFD().sync();
+                } finally {
+                    out.close();
+                }
+            } finally {
+                in.close();
+            }
+            if (tmp.length() != src.length() || !tmp.renameTo(dst)) {
+                tmp.delete();
+                call.reject("A másolás nem sikerült: " + dst.getPath());
+                return;
+            }
+            JSObject r = new JSObject();
+            r.put("path", dst.getPath());
+            r.put("size", dst.length());
+            call.resolve(r);
+        } catch (Exception e) {
+            if (tmp != null && tmp.exists()) {
+                tmp.delete();
+            }
+            call.reject(msg(e));
+        }
+    }
+
+    /** A mappa fájljainak nevei (almappák nélkül). Ha nincs ilyen mappa: üres lista. */
+    @PluginMethod
+    public void listFiles(PluginCall call) {
+        try {
+            File dir = new File(call.getString("dir", ""));
+            JSArray names = new JSArray();
+            File[] list = dir.isDirectory() ? dir.listFiles() : null;
+            if (list != null) {
+                for (File f : list) {
+                    if (f.isFile()) {
+                        names.put(f.getName());
+                    }
+                }
+            }
+            JSObject r = new JSObject();
+            r.put("files", names);
+            call.resolve(r);
+        } catch (Exception e) {
+            call.reject(msg(e));
+        }
+    }
+
+    /** Csak a saját biztonsági másolat (…_elotte_ÉÉÉÉHHNN_ÓÓPPMM.db) törölhető. */
+    @PluginMethod
+    public void deleteFile(PluginCall call) {
+        try {
+            File f = new File(call.getString("path", ""));
+            if (!f.getName().matches("^[A-Za-z0-9_]+_elotte_\\d{8}_\\d{6}\\.db$")) {
+                call.reject("Csak biztonsági másolat törölhető");
+                return;
+            }
+            if (f.isFile() && !f.delete()) {
+                call.reject("A fájl nem törölhető: " + f.getPath());
+                return;
+            }
+            call.resolve();
         } catch (Exception e) {
             call.reject(msg(e));
         }

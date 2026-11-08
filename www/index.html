@@ -167,11 +167,26 @@ textarea.txt-input{resize:none;height:64px}
 .path-save{background:var(--blue);color:#fff;border:none;border-radius:var(--r2);padding:8px 12px;font-size:12px;font-weight:600;flex-shrink:0;white-space:nowrap}
 
 /* rovat lista */
-.rovat-item{padding:12px 0;border-bottom:1px solid var(--border);font-size:14px;color:var(--txt);display:flex;justify-content:space-between;align-items:center;gap:10px}
+.rovat-item{padding:12px 0;border-bottom:1px solid var(--border);font-size:14px;color:var(--txt);display:flex;align-items:center;gap:4px}
 .rovat-item:last-child{border-bottom:none}
 .rovat-item.on{color:var(--blue);font-weight:600}
-.rovat-item span:first-child{overflow:hidden;text-overflow:ellipsis}
-.rovat-count{font-size:12px;color:var(--txt3);flex-shrink:0}
+.rv-box{display:flex;align-items:center;justify-content:center;width:48px;align-self:stretch;margin:-12px 0;flex-shrink:0}
+.rv-chk{width:20px;height:20px;accent-color:var(--blue);pointer-events:none}
+.rv-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rovat-count{font-size:12px;color:var(--txt3);flex-shrink:0;white-space:nowrap}
+.modal-sub{padding:10px 18px 8px;display:flex;flex-direction:column;gap:8px;flex-shrink:0;border-bottom:1px solid var(--border)}
+.modal-foot{padding:10px 18px;padding-bottom:calc(10px + var(--sab));border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;flex-shrink:0}
+.rv-opts{display:flex;flex-wrap:wrap;gap:6px 18px}
+.rv-opt{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt)}
+.rv-opt input{width:18px;height:18px;accent-color:var(--blue)}
+.rv-sort{background:#000;border:1px solid rgba(255,255,255,0.28);color:var(--txt2);border-radius:var(--r2);padding:0 11px;font-size:12px;flex-shrink:0;white-space:nowrap}
+body.light .rv-sort{background:#fff;border-color:rgba(0,0,0,0.22)}
+.rv-sort.on{background:var(--blue2);border-color:var(--blue);color:var(--blue)}
+.mg-line{font-size:12.5px;line-height:1.6}
+.mg-line b{color:var(--txt)}
+.mg-file small{display:block;color:var(--txt3);font-size:11px;margin-top:2px}
+.mg-file.off label{color:var(--txt3)}
+#merge-log{white-space:pre-wrap;font-size:12.5px;line-height:1.6}
 
 /* címkék */
 #tags-article-title{font-size:13px;color:var(--txt3);line-height:1.5;padding:8px;background:var(--bg3);border-radius:var(--r2);overflow-wrap:break-word}
@@ -204,7 +219,7 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
 
   <!-- FEJLÉC -->
   <div id="header">
-    <h1>Hír-Radar <span id="ver">v5.0</span> <small id="db-lbl">Nincs adatbázis megnyitva</small></h1>
+    <h1>Hír-Radar <span id="ver">v5.1</span> <small id="db-lbl">Nincs adatbázis megnyitva</small></h1>
     <button class="hb" id="toggle-rows-btn" title="Gombsorok elrejtése">▲</button>
     <button class="hb" id="theme-btn">🌙</button>
     <button class="hb primary" id="export-btn" title="Jelölt cikkek mentése a BM adatbázisba">📤 <span id="exp-count">0</span></button>
@@ -310,7 +325,26 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
 <div class="modal-overlay" id="rovat-modal-overlay">
   <div class="modal">
     <div class="modal-hdr"><h2>📁 Rovat szűrő</h2><button class="modal-close" data-close="rovat-modal-overlay">✕</button></div>
+    <div class="modal-sub">
+      <div class="row2">
+        <input type="search" id="rovat-search" class="txt-input" placeholder="Rovat keresése…" autocapitalize="off" autocomplete="off" spellcheck="false" style="flex:1">
+        <button class="rv-sort on" id="rovat-sort-n" title="Darabszám szerint">Db</button>
+        <button class="rv-sort" id="rovat-sort-az" title="ABC sorrend">A–Z</button>
+      </div>
+      <div class="rv-opts">
+        <label class="rv-opt"><input type="checkbox" id="rovat-excl"> Kivéve a kijelölteket</label>
+        <label class="rv-opt" id="rovat-new-row"><input type="checkbox" id="rovat-new"> 🟢 Csak új (el nem döntött)</label>
+      </div>
+    </div>
     <div class="modal-body" style="gap:0;padding-top:0;padding-bottom:0"><div id="rovat-list"></div></div>
+    <div class="modal-foot">
+      <div class="info" id="rovat-sum" style="font-size:12px"></div>
+      <div class="row2">
+        <button class="big-btn2" id="rovat-clear" style="flex:1">✨ Mind</button>
+        <button class="big-btn" id="rovat-apply" style="flex:2">✔ Alkalmaz</button>
+      </div>
+      <div class="info">Névre koppintás: csak az a rovat. Jelölőnégyzettel több rovat is választható, utána ✔ Alkalmaz.</div>
+    </div>
   </div>
 </div>
 
@@ -368,6 +402,12 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
         <div class="info" id="db-status-info"></div>
       </div>
 
+      <div class="section">
+        <h3>🔀 Összevonás az asztali adatbázisokkal</h3>
+        <button class="big-btn" id="merge-open-btn">🔀 Összevonás megnyitása…</button>
+        <div class="info">Az asztali radar_memory.db, bookmarks.db és triage.db egyesítése a telefon adatbázisaival (előtte automatikus biztonsági mentés).</div>
+      </div>
+
       <div class="section danger-sec">
         <h3>🗑 Törölni jelöltek végleges törlése</h3>
         <button class="big-btn danger" id="del-all-btn">🗑 Összes törölni jelölt cikk törlése</button>
@@ -386,6 +426,33 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
         <button class="color-apply-btn" id="color-apply-btn">✅ Alkalmaz</button>
         <button class="color-reset-btn" id="color-reset-btn">↩ Alapért.</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ÖSSZEVONÁS MODAL -->
+<div class="modal-overlay" id="merge-modal-overlay">
+  <div class="modal">
+    <div class="modal-hdr"><h2>🔀 Összevonás az asztali DB-kkel</h2><button class="modal-close" data-close="merge-modal-overlay">✕</button></div>
+    <div class="modal-body">
+      <div class="field-label">Az asztali fájlok mappája a telefonon (itt keresi a három fájlt)</div>
+      <input type="text" id="merge-dir" class="txt-input mono" autocapitalize="off" autocomplete="off" spellcheck="false">
+      <button class="big-btn2" id="merge-scan-btn">🔎 Fájlok keresése</button>
+      <div style="display:flex;flex-direction:column">
+        <div class="check-row mg-file" id="mgrow-radar"><input type="checkbox" id="mg-radar" disabled><label for="mg-radar">📰 radar_memory.db<small id="mgst-radar">–</small></label></div>
+        <div class="check-row mg-file" id="mgrow-bm"><input type="checkbox" id="mg-bm" disabled><label for="mg-bm">🔖 bookmarks.db<small id="mgst-bm">–</small></label></div>
+        <div class="check-row mg-file" id="mgrow-triage" style="border-bottom:none"><input type="checkbox" id="mg-triage" disabled><label for="mg-triage">🧠 triage.db<small id="mgst-triage">–</small></label></div>
+      </div>
+      <div class="field-label">Bookmarks: ha egy közös könyvjelző leíró mezői (cím, kategória, tags, jegyzet…) eltérnek, melyik oldal értéke maradjon? (A címkék, az olvasott / törlésre vár / védett állapot mindkét oldalról egyesül.)</div>
+      <div style="display:flex;flex-direction:column">
+        <div class="check-row"><input type="radio" name="mg-prim" id="mg-prim-phone" value="phone" checked><label for="mg-prim-phone">📱 A telefoné<small style="display:block;color:var(--txt3);font-size:11px;margin-top:2px">ha a telefon fájlja a tisztított</small></label></div>
+        <div class="check-row" style="border-bottom:none"><input type="radio" name="mg-prim" id="mg-prim-desk" value="desk"><label for="mg-prim-desk">🖥 Az asztalié<small style="display:block;color:var(--txt3);font-size:11px;margin-top:2px">ha a PC-n tisztítottad a címkéket, és az asztali fájl a tisztított</small></label></div>
+      </div>
+      <button class="big-btn2" id="merge-preview-btn" disabled>📋 Előnézet</button>
+      <div class="box mg-line" id="merge-preview" style="display:none"></div>
+      <button class="big-btn" id="merge-run-btn" disabled>✅ Összevonás indítása</button>
+      <div class="box" id="merge-result" style="display:none"><div id="merge-log"></div></div>
+      <p class="info">A telefon adatbázisába ír (a három fájl közül azokba, amelyeket bejelölsz); az asztali fájlokat nem módosítja. Indítás előtt a telefon fájljairól másolat készül a mappa <b>mentes</b> almappájába (a legutóbbi 2 marad meg). A szabályok megegyeznek a PC-s DB Kezelő 4.1-gyel: státusz-sorrend törölni &gt; olvasni &gt; menteni &gt; új &gt; exportált; a védelem „vagy"; a címkék egyesülnek; a BM-ben az URL azonosít. Az összevonás nem tud „visszavonást" követni: ha egy cikket az egyik oldalon törölve jelöltél, a másik oldalról nem áll vissza.</p>
     </div>
   </div>
 </div>
