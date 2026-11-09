@@ -1,13 +1,16 @@
-# Hír-Radar Mobil (Android, v5.1)
+# Hír-Radar Mobil (Android, v5.2)
 
 A `hr_mobil_v4.0.html` (Hír-Radar cikkválogató) és a `triage_mobil_v1_0.html` (döntés + indoklás naplózás) egyesítése,
 natív SQLite-tal: a telefon tárhelyén lévő adatbázisokat közvetlenül olvassa és írja, nincs fájlválasztás, export vagy kézi visszamásolás.
 Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevonást (v5.1-től) az app maga végzi (lásd lent).
 
-## Újdonságok a v5.1-ben
-- **📁 Rovat szűrő**: rovat szerint választod ki, mi jelenjen meg (gyorsabb, mint a véletlen sorrend, ha pl. a sport és tudomány rovatot gyorsan törlöd).
+## Újdonságok a v5.2-ben
 - **Szűrőgombok** (🔐 💙 📖 🗑 ✨): magasabbak, és alattuk látszik a darabszámuk.
 - **🛡 Véletlen dupla érintés ellen**: az alsó 🔒 / 📖 / 💙 / 🗑 gomb ugyanaz csak 2 mp múlva nyomható újra (lásd lent).
+- A verziószám a fejlécben mostantól a `package.json`-ból jön, így minden új build más számot mutat. (Fejlesztői szabály: minden változtatásnál emelni kell a `package.json` verzióját.)
+
+## Újdonságok a v5.1-ben
+- **📁 Rovat szűrő**: rovat szerint választod ki, mi jelenjen meg (gyorsabb, mint a véletlen sorrend, ha pl. a sport és tudomány rovatot gyorsan törlöd).
 - **🔀 Összevonás az asztali adatbázisokkal** a ⚙️ Beállításokban: radar_memory.db, bookmarks.db, triage.db, a PC-s DB Kezelő 4.1 szabályaival.
 
 ## Fájlok a telefonon (alapértelmezett útvonalak, a ⚙️ Beállításokban átírhatók)

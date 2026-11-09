@@ -69,6 +69,9 @@ body.light .nb{background:#fff;border-color:rgba(0,0,0,0.22)}
 .nb.on-red    {background:var(--red2);   border-color:var(--red);   color:var(--red)!important}
 .nb.on-purple {background:var(--purple2);border-color:var(--purple);color:var(--purple)!important}
 .nb:active{opacity:.7;transform:scale(.95)}
+.nb.mb{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-width:0;padding:10px 2px 8px}
+.mb .mi{font-size:19px;line-height:1}
+.mb .mn{font-size:12px;font-weight:600;line-height:1;color:var(--stats-color);white-space:nowrap}
 
 /* ── KERESÉS ── */
 #search-row{background:var(--bg2);border-bottom:1px solid var(--border);padding:6px 10px;flex-shrink:0;display:flex;gap:6px;align-items:center}
@@ -130,6 +133,7 @@ body.light .actbtn{border-color:rgba(0,0,0,0.2)}
 .actbtn.del{background:var(--red2);color:var(--red)}
 .actbtn.del.on{background:var(--red);color:#fff}
 .actbtn:active{opacity:.75;transform:scale(.95)}
+.actbtn.cool{opacity:.35}
 
 /* ── MODÁLIS ABLAKOK ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;align-items:flex-end;justify-content:center;z-index:100;padding-bottom:var(--kb)}
@@ -243,26 +247,19 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
     <button class="hb" id="search-fields-btn">🔍 Miben ▾</button>
   </div>
 
-  <!-- 2. gombsor: védett | mentett | olvasni | törölni | mind -->
+  <!-- 2. gombsor: védett | mentett | olvasni | törölni | mind (alattuk a darabszám: 🔒 | 💙 | 📖 | 🗑 | 🟢 új) -->
   <div id="mode-row">
-    <button class="nb" id="btn-mode-prot"  title="Védett cikkek">🔐</button>
-    <button class="nb" id="btn-mode-saved" title="Menteni (💙)">💙</button>
-    <button class="nb" id="btn-mode-read"  title="Olvasni">📖</button>
-    <button class="nb" id="btn-mode-del"   title="Törölni">🗑</button>
-    <button class="nb on" id="btn-mode-all" title="Mind">✨</button>
+    <button class="nb mb" id="btn-mode-prot"  title="Védett cikkek"><span class="mi">🔐</span><b class="mn" id="stat-prot">–</b></button>
+    <button class="nb mb" id="btn-mode-saved" title="Menteni (💙)"><span class="mi">💙</span><b class="mn" id="stat-marked">–</b></button>
+    <button class="nb mb" id="btn-mode-read"  title="Olvasni"><span class="mi">📖</span><b class="mn" id="stat-read">–</b></button>
+    <button class="nb mb" id="btn-mode-del"   title="Törölni"><span class="mi">🗑</span><b class="mn" id="stat-del">–</b></button>
+    <button class="nb mb on" id="btn-mode-all" title="Mind: új (🟢) + 💙 + 📖; a szám az új cikkeké"><span class="mi">✨</span><b class="mn" id="stat-seen">–</b></button>
   </div>
 
   <!-- STATISZTIKA -->
   <div id="stats-row">
     <div class="stats-line">
       <span>Σ <b id="stat-total">–</b></span>
-      <span>🟢 <b id="stat-seen">–</b></span>
-      <span>💙 <b id="stat-marked">–</b></span>
-      <span>📖 <b id="stat-read">–</b></span>
-    </div>
-    <div class="stats-line">
-      <span>🗑 <b id="stat-del">–</b></span>
-      <span>🔒 <b id="stat-prot">–</b></span>
       <span>🧠 <b id="stat-tri">–</b></span>
       <span>📍 <b id="stat-pos">–</b></span>
     </div>
@@ -400,6 +397,16 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
         <button class="big-btn" id="paths-save-btn">💾 Mentés és adatbázisok újranyitása</button>
         <button class="big-btn2" id="paths-default-btn">↩ Alapértelmezett útvonalak</button>
         <div class="info" id="db-status-info"></div>
+      </div>
+
+      <div class="section">
+        <h3>🛡 Véletlen dupla érintés ellen</h3>
+        <div class="field-label">Ugyanaz az alsó gomb (🔒 📖 💙 🗑) ennyi másodperc múlva nyomható újra</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="number" id="btn-lock-sec" class="txt-input" min="0" max="10" step="0.5" inputmode="decimal" style="flex:1;min-width:0">
+          <button class="big-btn2" id="btn-lock-apply" style="flex:1;margin:0">✔ Alkalmaz</button>
+        </div>
+        <div class="info">Alapértelmezés: 2 mp. A tiltás a döntés után, az új cikk megjelenésétől számít; közben a gomb halványabb. Másik gomb azonnal nyomható. 0 = kikapcsolva.</div>
       </div>
 
       <div class="section">

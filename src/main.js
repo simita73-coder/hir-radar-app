@@ -2,11 +2,13 @@ import { registerPlugin } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { splitTags, stripWrappers, canonToken, normalizeTags, unionTags } from './tags.js';
 import { createMerge } from './merge.js';
+import pkg from '../package.json';
 
 // Saját natív plugin (android-extra/HrPlugin.java). A __MOCK_HR__ csak az automatikus tesztekhez van.
 const HR = window.__MOCK_HR__ || registerPlugin('HrNative');
 
-const VERSION = 'v5.1';
+// A verziószám egyetlen helyen van: a package.json "version" mezőjében (a build beleteszi a fejlécbe és a címbe).
+const VERSION = 'v' + pkg.version.replace(/(\.0)+$/, '');   // 5.2.0 → v5.2, 5.2.1 → v5.2.1
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const errText = e => (e && (e.message || e.errorMessage)) || String(e);
