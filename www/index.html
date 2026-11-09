@@ -69,9 +69,11 @@ body.light .nb{background:#fff;border-color:rgba(0,0,0,0.22)}
 .nb.on-red    {background:var(--red2);   border-color:var(--red);   color:var(--red)!important}
 .nb.on-purple {background:var(--purple2);border-color:var(--purple);color:var(--purple)!important}
 .nb:active{opacity:.7;transform:scale(.95)}
-.nb.mb{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-width:0;padding:10px 2px 8px}
+.nb.mb{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-width:0;padding:10px 1px 8px}
 .mb .mi{font-size:19px;line-height:1}
-.mb .mn{font-size:12px;font-weight:600;line-height:1;color:var(--stats-color);white-space:nowrap}
+.mb .mn{font-size:11px;font-weight:600;line-height:1;color:var(--stats-color);white-space:nowrap}
+.mb .mn.long{font-size:10.5px;letter-spacing:-.2px}
+.mb.filt .mi::after{content:'●';font-size:8px;color:var(--amber);vertical-align:top;margin-left:1px}
 
 /* ── KERESÉS ── */
 #search-row{background:var(--bg2);border-bottom:1px solid var(--border);padding:6px 10px;flex-shrink:0;display:flex;gap:6px;align-items:center}
@@ -133,6 +135,11 @@ body.light .actbtn{border-color:rgba(0,0,0,0.2)}
 .actbtn.del{background:var(--red2);color:var(--red)}
 .actbtn.del.on{background:var(--red);color:#fff}
 .actbtn:active{opacity:.75;transform:scale(.95)}
+.actbtn.rsave{display:none;flex:4;font-size:17px;font-weight:700;background:var(--green2);color:var(--green)}
+/* 🧠 triage-lista mód: a döntés-gombok helyett 💾 Indoklás mentése; címke nincs */
+body.tri-mode .actbtn.prot,body.tri-mode .actbtn.read,body.tri-mode .actbtn.save,body.tri-mode .actbtn.del{display:none}
+body.tri-mode .actbtn.rsave{display:flex}
+body.tri-mode #btn-tag{display:none}
 .actbtn.cool{opacity:.35}
 
 /* ── MODÁLIS ABLAKOK ── */
@@ -247,8 +254,9 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
     <button class="hb" id="search-fields-btn">🔍 Miben ▾</button>
   </div>
 
-  <!-- 2. gombsor: védett | mentett | olvasni | törölni | mind (alattuk a darabszám: 🔒 | 💙 | 📖 | 🗑 | 🟢 új) -->
+  <!-- 4. sor: triage | védett | mentett | olvasni | törölni | mind (alattuk a darabszám: 🧠 | 🔒 | 💙 | 📖 | 🗑 | 🟢 új) -->
   <div id="mode-row">
+    <button class="nb mb" id="btn-mode-tri"   title="Triage-döntések (indoklás utólagos szerkesztése)"><span class="mi">🧠</span><b class="mn" id="stat-tri">–</b></button>
     <button class="nb mb" id="btn-mode-prot"  title="Védett cikkek"><span class="mi">🔐</span><b class="mn" id="stat-prot">–</b></button>
     <button class="nb mb" id="btn-mode-saved" title="Menteni (💙)"><span class="mi">💙</span><b class="mn" id="stat-marked">–</b></button>
     <button class="nb mb" id="btn-mode-read"  title="Olvasni"><span class="mi">📖</span><b class="mn" id="stat-read">–</b></button>
@@ -260,7 +268,6 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
   <div id="stats-row">
     <div class="stats-line">
       <span>Σ <b id="stat-total">–</b></span>
-      <span>🧠 <b id="stat-tri">–</b></span>
       <span>📍 <b id="stat-pos">–</b></span>
     </div>
   </div>
@@ -300,6 +307,7 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
     <button class="actbtn read" id="act-read" title="Olvasni">📖</button>
     <button class="actbtn save" id="act-save" title="Menteni">💙</button>
     <button class="actbtn del"  id="act-del"  title="Törölni">🗑</button>
+    <button class="actbtn rsave" id="act-reason-save" title="Csak az indoklást menti, a döntés nem változik">💾 Indoklás mentése</button>
   </div>
 </div>
 
@@ -314,6 +322,35 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
       <div class="check-row"><input type="checkbox" id="chk-url"><label for="chk-url">🔗 URL</label></div>
       <div class="check-row" style="border-bottom:none"><input type="checkbox" id="chk-word"><label for="chk-word">🔤 Teljes szó egyezés</label></div>
       <p class="info" style="margin-top:8px">A kereséshez legalább 3 karakter kell. Az ékezetes betűk kis- és nagybetűs alakja is egyezik (pl. „őrült" = „ŐRÜLT").</p>
+    </div>
+  </div>
+</div>
+
+<!-- 🧠 TRIAGE-LISTA SZŰRŐ MODAL -->
+<div class="modal-overlay" id="tri-modal-overlay">
+  <div class="modal">
+    <div class="modal-hdr"><h2>🧠 Triage-lista szűrő</h2><button class="modal-close" data-close="tri-modal-overlay">✕</button></div>
+    <div class="modal-body" style="gap:0">
+      <div class="field-label" style="margin-bottom:2px">Az én döntésem (egyik sincs bejelölve = mind)</div>
+      <div class="check-row"><input type="checkbox" id="tf-dec-menteni"><label for="tf-dec-menteni">💙 menteni</label></div>
+      <div class="check-row"><input type="checkbox" id="tf-dec-olvasni"><label for="tf-dec-olvasni">📖 olvasni</label></div>
+      <div class="check-row"><input type="checkbox" id="tf-dec-torolni"><label for="tf-dec-torolni">🗑 törölni</label></div>
+      <div class="check-row" style="border-bottom:none"><input type="checkbox" id="tf-dec-bizonytalan"><label for="tf-dec-bizonytalan">❓ bizonytalan</label></div>
+      <div class="field-label" style="margin:12px 0 2px">🤖 AI-döntés</div>
+      <div class="check-row"><input type="radio" name="tf-ai" id="tf-ai-all" value="all" checked><label for="tf-ai-all">Mind</label></div>
+      <div class="check-row"><input type="radio" name="tf-ai" id="tf-ai-diff" value="diff"><label for="tf-ai-diff">⚠️ Az AI másként döntött, mint én</label></div>
+      <div class="check-row"><input type="radio" name="tf-ai" id="tf-ai-same" value="same"><label for="tf-ai-same">✅ Az AI ugyanúgy döntött</label></div>
+      <div class="check-row" style="border-bottom:none"><input type="radio" name="tf-ai" id="tf-ai-none" value="none"><label for="tf-ai-none">Nincs AI-döntés</label></div>
+      <div class="field-label" style="margin:12px 0 2px">Indoklás</div>
+      <div class="check-row" style="border-bottom:none"><input type="checkbox" id="tf-noreason"><label for="tf-noreason">✍️ Csak az indoklás nélküliek</label></div>
+    </div>
+    <div class="modal-foot">
+      <div class="info" id="tf-sum" style="font-size:12px"></div>
+      <div class="row2">
+        <button class="big-btn2" id="tf-clear" style="flex:1">✨ Mind</button>
+        <button class="big-btn" id="tf-apply" style="flex:2">✔ Alkalmaz</button>
+      </div>
+      <div class="info">Ebben a listában csak az indoklás szerkeszthető, a döntés nem változik. A 📁 rovat-szűrő, a keresés és a ⬇/⬆/🔀 rendezés itt is működik.</div>
     </div>
   </div>
 </div>
@@ -374,6 +411,7 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
       <div class="check-row" style="border-bottom:none"><input type="checkbox" id="exp-update"><label for="exp-update" style="font-size:14px">Ha a cikk már a BM-ben van: a cím és a státusz is frissüljön</label></div>
       <button class="big-btn" id="exp-run-btn">📤 Mentés indítása</button>
       <div class="box" id="exp-result" style="display:none"></div>
+      <p class="info">A védett cikkek védettsége a BM-be átmegy, a Hír-Radarban viszont megszűnik (védett cikk nem lehet 🗑), így a végleges törlés őket is eltávolítja.</p>
       <p class="info">A 💙 és 📖 jelölt cikkek bekerülnek a bookmarks.db-be („ÚJ FOGÁS (Radar)" státusszal, a rovat a kategória, a címkéikkel és a védettségükkel; az 📖 cikkek olvasásra várónak). Ha a cikk már megvan a BM-ben, nem készül másolat: a védettség, az olvasásra jelölés és a címkék frissülnek. Utána a cikkek a Hír-Radarban „törölni" (🗑) státuszba kerülnek, így a lista fogy, a BM pedig gyarapszik.</p>
     </div>
   </div>
@@ -413,6 +451,12 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
         <h3>🔀 Összevonás az asztali adatbázisokkal</h3>
         <button class="big-btn" id="merge-open-btn">🔀 Összevonás megnyitása…</button>
         <div class="info">Az asztali radar_memory.db, bookmarks.db és triage.db egyesítése a telefon adatbázisaival (előtte automatikus biztonsági mentés).</div>
+      </div>
+
+      <div class="section">
+        <h3>🔧 Védett és törlésre jelölt cikkek</h3>
+        <button class="big-btn2" id="fix-prot-btn" disabled>🔧 Javítás</button>
+        <div class="info">Védett cikk nem lehet egyben 🗑 is. Ha mégis van ilyen (régebbi hiba, vagy az asztali adatbázisból jött), a javítás 🟢 újra állítja – a védelem marad, a triage-döntés nem változik.</div>
       </div>
 
       <div class="section danger-sec">
@@ -455,6 +499,7 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
         <div class="check-row"><input type="radio" name="mg-prim" id="mg-prim-phone" value="phone" checked><label for="mg-prim-phone">📱 A telefoné<small style="display:block;color:var(--txt3);font-size:11px;margin-top:2px">ha a telefon fájlja a tisztított</small></label></div>
         <div class="check-row" style="border-bottom:none"><input type="radio" name="mg-prim" id="mg-prim-desk" value="desk"><label for="mg-prim-desk">🖥 Az asztalié<small style="display:block;color:var(--txt3);font-size:11px;margin-top:2px">ha a PC-n tisztítottad a címkéket, és az asztali fájl a tisztított</small></label></div>
       </div>
+      <div class="check-row" style="border-bottom:none"><input type="checkbox" id="mg-skip-decided" checked><label for="mg-skip-decided">🧠 Ne hozza vissza a triage-ban már eldöntött cikkeket<small style="display:block;color:var(--txt3);font-size:11px;margin-top:2px">A telefon triage.db-jében szereplő (💙 📖 🗑) cikkek – a végleg törölteket is – kimaradnak az asztaliból; csak a valóban új cikkek kerülnek át.</small></label></div>
       <button class="big-btn2" id="merge-preview-btn" disabled>📋 Előnézet</button>
       <div class="box mg-line" id="merge-preview" style="display:none"></div>
       <button class="big-btn" id="merge-run-btn" disabled>✅ Összevonás indítása</button>

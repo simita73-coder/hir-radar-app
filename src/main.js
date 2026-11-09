@@ -27,10 +27,13 @@ document.title = 'Hír-Radar Mobil ' + VERSION;
 // ── állapot ─────────────────────────────────────────────────────────────────────
 let radarOpen = false, triageOpen = false, triageNote = '';
 let allIds = [], idx = 0, cur = null;          // a lista csak sorazonosítókat (rowid) tárol, a cikk külön töltődik
-let viewMode = 'all';                          // all | prot | saved | read | del
+let viewMode = 'all';                          // all | prot | saved | read | del | tri
 // rovat-szűrő: kijelölt rovatok (vagy „kivéve” mód) + „csak új” kapcsoló
 const flt = { sel: new Set(), excl: false, onlyNew: false };
 const fltActive = () => flt.sel.size > 0 || flt.onlyNew;
+// 🧠 triage-lista szűrő: döntés (üres = mind), AI-eltérés (all | diff | same | none), csak indoklás nélküliek
+const tflt = { dec: new Set(), ai: 'all', noReason: false };
+const triFiltActive = () => tflt.dec.size > 0 || tflt.ai !== 'all' || tflt.noReason;
 let sortMode = 'random';                       // random | desc | asc
 let lastAction = null, searchTimer = null, statsTimer = null;
 let renderTok = 0, statsTok = 0, listTok = 0, busy = false;
@@ -251,7 +254,31 @@ Object.keys(COLOR_INPUT_MAP).forEach(k => {
 
 // ── beállítások ────────────────────────────────────────────────────────────────
 const DEL_COND = "status = 'DELETED' AND (protected IS NULL OR protected != 1)";
+// védett és egyben törlésre jelölt (🗑) cikk nem létezhet; a javítás 🟢 újra állítja (a védelem marad)
+const PROT_DEL_COND = "status = 'DELETED' AND protected = 1";
+async function refreshFixCount() {
+  const btn = $('fix-prot-btn');
+  if (!radarOpen) { btn.textContent = '🔧 Javítás'; btn.disabled = true; return; }
+  try {
+    const n = await qVal('radar', `SELECT COUNT(*) FROM memory WHERE ${PROT_DEL_COND}`);
+    btn.disabled = !n;
+    btn.textContent = n ? `🔧 Javítás (${fmt(n)} cikk)` : '✔ Nincs ilyen cikk';
+  } catch { btn.disabled = true; }
+}
+$('fix-prot-btn').onclick = async () => {
+  if (!radarOpen) { toast('⚠️ Nincs megnyitott adatbázis'); return; }
+  try {
+    const n = await qVal('radar', `SELECT COUNT(*) FROM memory WHERE ${PROT_DEL_COND}`);
+    if (!n) { toast('Nincs védett és törlésre jelölt cikk'); return; }
+    if (!confirm(`${fmt(n)} cikk védett és egyben törlésre jelölt.\n\nA javítás 🟢 újra állítja őket (a védelem marad). A triage-döntésükhöz nem nyúl.`)) return;
+    const r = await run('radar', `UPDATE memory SET status = 'SEEN' WHERE ${PROT_DEL_COND}`);
+    lastAction = null;
+    toast(`🔧 Javítva: ${fmt(r.changes)} cikk`, 3500);
+    await loadRecords(); scheduleStats(0); refreshFixCount(); refreshDeletableCount();
+  } catch (e) { toast('❌ ' + errText(e), 4000); }
+};
 async function refreshDeletableCount() {
+  refreshFixCount();
   const btn = $('del-all-btn');
   if (!radarOpen) { btn.textContent = '🗑 Összes törölni jelölt cikk törlése'; btn.disabled = true; return; }
   try {
@@ -315,6 +342,7 @@ const MODE_SQL = {
   del: "status = 'DELETED'",
 };
 const FIELD_COL = { title: 'title', source: 'source', date: 'add_date', url: 'url' };
+const TRI_FIELD_COL = { title: 'title', source: 'domain', date: 'date', url: 'article_key' };
 function searchFields() {
   const f = ['title', 'source', 'date', 'url'].filter(k => $('chk-' + k).checked);
   return f.length ? f : ['title', 'source', 'date', 'url'];
@@ -332,24 +360,44 @@ function baseWhere(withMode = true) {
   return { where, params };
 }
 
+// 🧠 triage-lista: a triage.db `decisions` sorai (source = 'hr'). draft: a szűrőablak vázlata (élő darabszámhoz)
+function triWhere(draft, noRovat) {
+  const t = draft || tflt;
+  const where = ["source = 'hr'"], params = [];
+  if (t.dec.size) { const l = [...t.dec]; where.push(`decision IN (${l.map(() => '?').join(',')})`); params.push(...l); }
+  else where.push("COALESCE(decision, '') <> ''");
+  if (t.noReason) where.push("TRIM(COALESCE(reason, '')) = ''");
+  if (t.ai === 'diff') where.push("COALESCE(ai_decision, '') <> '' AND ai_decision <> decision");
+  else if (t.ai === 'same') where.push("COALESCE(ai_decision, '') <> '' AND ai_decision = decision");
+  else if (t.ai === 'none') where.push("COALESCE(ai_decision, '') = ''");
+  if (!noRovat && flt.sel.size) {
+    const list = [...flt.sel];
+    where.push(`COALESCE(domain, '') ${flt.excl ? 'NOT IN' : 'IN'} (${list.map(() => '?').join(',')})`);
+    params.push(...list);
+  }
+  return { where, params };
+}
+
 async function loadRecords(focusId) {
-  if (!radarOpen) { allIds = []; idx = 0; cur = null; showEmpty(); return; }
+  const tri = viewMode === 'tri';
+  if (tri ? !triageOpen : !radarOpen) { allIds = []; idx = 0; cur = null; showEmpty(); return; }
   const tok = ++listTok;
   $('stat-pos').textContent = '⏳';
-  const { where, params } = baseWhere();
-  const order = sortMode === 'asc' ? 'ORDER BY add_date ASC' : sortMode === 'desc' ? 'ORDER BY add_date DESC' : '';
+  const { where, params } = tri ? triWhere() : baseWhere();
+  const db = tri ? 'triage' : 'radar', idCol = tri ? 'id' : 'rowid', table = tri ? 'decisions' : 'memory', dateCol = tri ? 'date' : 'add_date';
+  const order = sortMode === 'asc' ? `ORDER BY ${dateCol} ASC` : sortMode === 'desc' ? `ORDER BY ${dateCol} DESC` : '';
   const shuffle = sortMode === 'random';
   const text = $('search-input').value.trim();
   let res;
   try {
     if (text.length >= 3) {
-      const cols = searchFields().map(f => FIELD_COL[f]);
+      const cols = searchFields().map(f => (tri ? TRI_FIELD_COL : FIELD_COL)[f]);
       res = await HR.searchIds({
-        db: 'radar', sql: `SELECT rowid, ${cols.join(', ')} FROM memory WHERE ${where.join(' AND ')} ${order}`,
+        db, sql: `SELECT ${idCol}, ${cols.join(', ')} FROM ${table} WHERE ${where.join(' AND ')} ${order}`,
         params, needle: text, word: $('chk-word').checked, shuffle,
       });
     } else {
-      res = await HR.queryIds({ db: 'radar', sql: `SELECT rowid FROM memory WHERE ${where.join(' AND ')} ${order}`, params, shuffle });
+      res = await HR.queryIds({ db, sql: `SELECT ${idCol} FROM ${table} WHERE ${where.join(' AND ')} ${order}`, params, shuffle });
     }
   } catch (e) { if (tok === listTok) { allIds = []; toast('❌ ' + errText(e), 4000); } res = null; }
   if (tok !== listTok) return;                       // közben újabb kérés indult
@@ -368,7 +416,20 @@ async function getTri(url) {
     return { decision: r[0], reason: r[1] || '', protected: r[2], ai_decision: r[3], ai_reason: r[4], ai_score: r[5] };
   } catch { return null; }
 }
+// triage-lista mód: a kártya a triage.db sorából épül (a végleg törölt cikkek is látszanak)
+async function getTriRecord(id) {
+  const rows = await q('triage', `SELECT id, article_key, title, domain, date, decision, reason, protected, ai_decision, ai_reason, ai_score FROM decisions WHERE id = ${rid(id)}`);
+  if (!rows.length) return null;
+  const r = rows[0];
+  const rec = { kind: 'tri', id: r[0], url: r[1] || '', title: r[2] || '', source: r[3] || '', date: r[4] || '', status: '', prot: r[7] ? 1 : 0, tags: '',
+    tri: { decision: r[5], reason: r[6] || '', protected: r[7], ai_decision: r[8], ai_reason: r[9], ai_score: r[10] }, radarStatus: null };
+  if (radarOpen && rec.url) {
+    try { const sr = await q('radar', 'SELECT status FROM memory WHERE url = ?', [rec.url]); rec.radarStatus = sr.length ? (sr[0][0] || 'SEEN') : ''; } catch { /* nem végzetes */ }
+  }
+  return rec;
+}
 async function getRecord(id) {
+  if (viewMode === 'tri') return getTriRecord(id);
   const rows = await q('radar', `SELECT rowid, url, source, title, status, add_date, protected, custom_tags FROM memory WHERE rowid = ${rid(id)}`);
   if (!rows.length) return null;
   const r = rows[0];
@@ -379,6 +440,10 @@ async function getRecord(id) {
 
 // ── statisztika (indexről, egyetlen lekérdezés) ────────────────────────────────
 function scheduleStats(ms = 500) { clearTimeout(statsTimer); statsTimer = setTimeout(refreshStats, ms); }
+// a gombok alatti számok: a hosszú (7+ karakteres, pl. „123 456”) kisebb betűvel, hogy hat gombnál is elférjen
+function fitModeNums() {
+  document.querySelectorAll('#mode-row .mn').forEach(e => e.classList.toggle('long', e.textContent.length >= 7));
+}
 async function refreshStats() {
   if (!radarOpen) return;
   const tok = ++statsTok;
@@ -387,13 +452,14 @@ async function refreshStats() {
     let total = 0, prot = 0; const by = {};
     for (const [st, n, p] of rows) { if (st === 'EXPORTED') continue; total += n; prot += (p || 0); by[st] = n; }
     let tri = null;
-    if (triageOpen) { try { tri = await qVal('triage', "SELECT COUNT(*) FROM decisions WHERE source = 'hr' AND decision IS NOT NULL"); } catch { /* nem kritikus */ } }
+    if (triageOpen) { try { tri = await qVal('triage', "SELECT COUNT(*) FROM decisions WHERE source = 'hr' AND COALESCE(decision, '') <> ''"); } catch { /* nem kritikus */ } }
     if (tok !== statsTok) return;
     $('stat-total').textContent = fmt(total); $('stat-seen').textContent = fmt(by.SEEN || 0);
     $('stat-marked').textContent = fmt(by.MARKED || 0); $('stat-read').textContent = fmt(by.READING || 0);
     $('stat-del').textContent = fmt(by.DELETED || 0); $('stat-prot').textContent = fmt(prot);
     $('stat-tri').textContent = tri == null ? '–' : fmt(tri);
     $('exp-count').textContent = fmt((by.MARKED || 0) + (by.READING || 0));
+    fitModeNums();
   } catch { /* a statisztika nem kritikus */ }
 }
 
@@ -401,13 +467,14 @@ async function refreshStats() {
 const EMPTY_MSGS = {
   all: 'Nincs találat.', prot: 'Nincs védett cikk.', saved: 'A 💙 „Menteni" lista üres.',
   read: 'Az 📖 „Olvasni" lista üres.', del: 'A 🗑 „Törölni" lista üres.',
+  tri: 'Nincs triage-döntés ezzel a szűrővel.',
 };
 const DEC_LABEL = { menteni: '💙 menteni', olvasni: '📖 olvasni', torolni: '🗑 törölni', bizonytalan: '❓ bizonytalan' };
 
 function showEmpty() {
   $('card-content').style.display = 'none'; $('empty-state').style.display = 'flex';
   $('empty-msg').innerHTML = radarOpen
-    ? esc(EMPTY_MSGS[viewMode] || 'Nincs találat.') + (fltActive() ? '<br><br>📁 Rovat-szűrő aktív – a 📁 gombbal kapcsolható ki.' : '')
+    ? esc(EMPTY_MSGS[viewMode] || 'Nincs találat.') + (viewMode === 'tri' && triFiltActive() ? '<br><br>🧠 Szűrő aktív – a 🧠 gombbal módosítható.' : '') + (fltActive() ? '<br><br>📁 Rovat-szűrő aktív – a 📁 gombbal kapcsolható ki.' : '')
     : 'Nincs adatbázis megnyitva.<br><br>Koppints a ⚙️ gombra az útvonalakhoz és az engedélyhez.';
   $('stat-pos').textContent = '–';
   $('reason-input').value = '';
@@ -452,6 +519,10 @@ function paintCard(r) {
 
   const tri = r.tri; let th = '';
   if (tri && tri.decision) th += `<div class="tri-box">🧠 Triage-döntés: <b>${esc(DEC_LABEL[tri.decision] || tri.decision)}</b></div>`;
+  if (r.kind === 'tri' && r.radarStatus != null) {
+    const RL = { SEEN: '🟢 új (még el nem döntött)', MARKED: '💙 menteni', READING: '📖 olvasni', DELETED: '🗑 törlésre jelölt', EXPORTED: 'exportált' };
+    th += `<div class="tri-box">📰 Hír-Radar: <b>${r.radarStatus === '' ? 'nincs a radar_memory.db-ben (törölve / exportálva)' : esc(RL[r.radarStatus] || r.radarStatus)}</b></div>`;
+  }
   if (tri && tri.ai_decision) {
     th += `<div class="tri-box ai">🤖 AI: <b>${esc(DEC_LABEL[tri.ai_decision] || tri.ai_decision)}</b>${tri.ai_score != null ? ` (${esc(tri.ai_score)}%)` : ''}${tri.ai_reason ? '\n' + esc(tri.ai_reason) : ''}</div>`;
   }
@@ -497,14 +568,23 @@ $('btn-sort').onclick = () => {
 $('btn-shuffle').onclick = () => { sortMode = 'random'; lsSet('hr_sort', sortMode); paintSortButtons(); loadRecords(); toast('🔀 Összekeverve!'); };
 
 // ── módok ───────────────────────────────────────────────────────────────────────
-const modeBtnMap = { prot: 'btn-mode-prot', saved: 'btn-mode-saved', read: 'btn-mode-read', del: 'btn-mode-del', all: 'btn-mode-all' };
-const modeCls = { prot: 'on-purple', saved: 'on', read: 'on-amber', del: 'on-red', all: 'on' };
+const modeBtnMap = { tri: 'btn-mode-tri', prot: 'btn-mode-prot', saved: 'btn-mode-saved', read: 'btn-mode-read', del: 'btn-mode-del', all: 'btn-mode-all' };
+const modeCls = { tri: 'on-green', prot: 'on-purple', saved: 'on', read: 'on-amber', del: 'on-red', all: 'on' };
+function paintTriMode() {
+  const on = viewMode === 'tri';
+  document.body.classList.toggle('tri-mode', on);
+  $('btn-mode-tri').classList.toggle('filt', on && triFiltActive());
+  $('reason-label').textContent = on ? '💬 Indoklás (a döntés nem változik)' : '💬 Miért? (opcionális)';
+  $('reason-input').placeholder = on ? '✍️ Írd le, miért ez a helyes döntés…' : '✍️ Írj indoklást, majd nyomj döntés gombot…';
+}
 function setMode(mode, focusId) {
+  if ((mode === 'tri') !== (viewMode === 'tri')) lastAction = null;       // a visszavonás nem léphet át a két lista között
   viewMode = mode;
   Object.keys(modeBtnMap).forEach(m => { const b = $(modeBtnMap[m]); b.className = 'nb mb'; if (m === mode) b.classList.add(modeCls[m]); });
+  paintTriMode();
   idx = 0; scheduleStats(300); return loadRecords(focusId);
 }
-Object.entries(modeBtnMap).forEach(([m, id]) => { $(id).onclick = () => setMode(m); });
+Object.entries(modeBtnMap).forEach(([m, id]) => { if (m !== 'tri') $(id).onclick = () => setMode(m); });
 
 // ── rovat szűrő ─────────────────────────────────────────────────────────────────
 // A névre koppintás: csak az a rovat (azonnal). A jelölőnégyzetekkel több rovat is választható → ✔ Alkalmaz.
@@ -545,7 +625,8 @@ function paintRovatSum() {
   $('rovat-sort-az').className = 'rv-sort' + (rovatSortAz ? ' on' : '');
 }
 $('btn-rovat').onclick = async () => {
-  if (!radarOpen) { toast('⚠️ Nincs megnyitott adatbázis'); return; }
+  const tri = viewMode === 'tri';
+  if (tri ? !triageOpen : !radarOpen) { toast('⚠️ Nincs megnyitott adatbázis'); return; }
   rovatDraft = new Set(flt.sel);
   $('rovat-excl').checked = flt.excl; $('rovat-new').checked = flt.onlyNew;
   $('rovat-new-row').style.display = viewMode === 'all' ? '' : 'none';
@@ -554,7 +635,9 @@ $('btn-rovat').onclick = async () => {
   $('rovat-sum').textContent = '';
   showModal('rovat-modal-overlay');
   try {
-    const rows = await q('radar', `SELECT COALESCE(source, ''), COUNT(*), SUM(CASE WHEN status = 'SEEN' THEN 1 ELSE 0 END) FROM memory WHERE ${MODE_SQL[viewMode]} GROUP BY 1`);
+    let rows;
+    if (tri) { const w = triWhere(null, true); rows = await q('triage', `SELECT COALESCE(domain, ''), COUNT(*), 0 FROM decisions WHERE ${w.where.join(' AND ')} GROUP BY 1`, w.params); }
+    else rows = await q('radar', `SELECT COALESCE(source, ''), COUNT(*), SUM(CASE WHEN status = 'SEEN' THEN 1 ELSE 0 END) FROM memory WHERE ${MODE_SQL[viewMode]} GROUP BY 1`);
     rovatRows = rows.map(([src, n, fresh]) => ({ src: String(src), n: n || 0, fresh: fresh || 0 }));
     renderRovatList();
   } catch (e) { $('rovat-list').innerHTML = `<div class="rovat-item"><span>❌ ${esc(errText(e))}</span></div>`; }
@@ -587,6 +670,47 @@ $('rovat-sort-n').onclick = () => { rovatSortAz = false; lsSet('hr_rovat_sort', 
 $('rovat-sort-az').onclick = () => { rovatSortAz = true; lsSet('hr_rovat_sort', 'az'); renderRovatList(); };
 $('rovat-apply').onclick = () => applyRovat(rovatDraft);
 $('rovat-clear').onclick = () => { rovatDraft = new Set(); $('rovat-excl').checked = false; $('rovat-new').checked = false; applyRovat([]); };
+
+// ── 🧠 triage-lista: belépés + szűrőablak ──────────────────────────────────────
+// A 🧠 gomb a triage.db döntéseit listázza (a végleg törölt cikkek is benne vannak). Itt csak az indoklás szerkeszthető,
+// a döntés nem változik. Szűrők: döntés · AI-eltérés · csak indoklás nélküliek (+ a 📁 rovat és a keresés).
+const TRI_DECS = ['menteni', 'olvasni', 'torolni', 'bizonytalan'];
+let triSumTok = 0;
+function readTriDraft() {
+  const dec = new Set(TRI_DECS.filter(k => $('tf-dec-' + k).checked));
+  const sel = document.querySelector('input[name="tf-ai"]:checked');
+  return { dec, ai: sel ? sel.value : 'all', noReason: $('tf-noreason').checked };
+}
+async function paintTriSum() {
+  const tok = ++triSumTok;
+  const w = triWhere(readTriDraft());
+  try {
+    const n = await qVal('triage', `SELECT COUNT(*) FROM decisions WHERE ${w.where.join(' AND ')}`, w.params);
+    if (tok === triSumTok) $('tf-sum').textContent = `Ezzel a szűrővel: ${fmt(n)} cikk` + (flt.sel.size ? ' (a 📁 rovat-szűrővel együtt)' : '');
+  } catch (e) { if (tok === triSumTok) $('tf-sum').textContent = '❌ ' + errText(e); }
+}
+function openTriFilter() {
+  TRI_DECS.forEach(k => { $('tf-dec-' + k).checked = tflt.dec.has(k); });
+  document.querySelectorAll('input[name="tf-ai"]').forEach(r => { r.checked = r.value === tflt.ai; });
+  $('tf-noreason').checked = tflt.noReason;
+  $('tf-sum').textContent = '…';
+  showModal('tri-modal-overlay');
+  paintTriSum();
+}
+document.querySelectorAll('#tri-modal-overlay input').forEach(i => i.addEventListener('change', paintTriSum));
+async function applyTriFilter(d) {
+  tflt.dec = d.dec; tflt.ai = d.ai; tflt.noReason = d.noReason;
+  closeModal('tri-modal-overlay'); paintTriMode();
+  await loadRecords();
+  toast(triFiltActive() ? `🧠 Szűrő: ${fmt(allIds.length)} cikk` : `🧠 Minden triage-döntés: ${fmt(allIds.length)}`, 2200);
+}
+$('tf-apply').onclick = () => applyTriFilter(readTriDraft());
+$('tf-clear').onclick = () => applyTriFilter({ dec: new Set(), ai: 'all', noReason: false });
+$('btn-mode-tri').onclick = () => {
+  if (!triageOpen) { toast('⚠️ A triage.db nincs megnyitva'); return; }
+  if (viewMode !== 'tri') setMode('tri');                  // a második koppintás (már triage-módban) csak a szűrőt nyitja
+  openTriFilter();
+};
 
 // ── keresés ─────────────────────────────────────────────────────────────────────
 $('search-input').addEventListener('input', () => {
@@ -628,7 +752,7 @@ async function triUpsert(r, decision, reason, prot) {
 }
 
 async function doDecide(decision) {
-  const r = currentRec(); if (!r || busy) return;
+  const r = currentRec(); if (!r || r.kind === 'tri' || busy) return;
   if (decision === 'torolni' && r.prot) { toast('⚠️ Védett cikk, nem törölhető!'); return; }
   busy = true;
   try {
@@ -654,7 +778,8 @@ async function doDecide(decision) {
 }
 
 async function doProtect() {
-  const r = currentRec(); if (!r || busy) return;
+  const r = currentRec(); if (!r || r.kind === 'tri' || busy) return;
+  if (!r.prot && r.status === 'DELETED') { toast('⚠️ Törlésre jelölt cikk nem védhető – előbb állítsd vissza', 3500); return; }   // védett + 🗑 kizárja egymást
   busy = true;
   try {
     const nv = r.prot ? 0 : 1;
@@ -694,12 +819,33 @@ async function doUndo() {
         if (a.triAdded) await run('triage', "DELETE FROM decisions WHERE source = 'hr' AND article_key = ?", [a.url]);
         else await run('triage', "UPDATE decisions SET protected = ?, updated_at = ? WHERE source = 'hr' AND article_key = ?", [a.prot ? 1 : 0, tsNow(), a.url]);
       }
+    } else if (a.type === 'reason') {
+      await run('triage', 'UPDATE decisions SET reason = ?, updated_at = ? WHERE id = ?', [a.old, tsNow(), rid(a.id)]);
     }
     lastAction = null; scheduleStats(); toast('↩ Visszavonva');
     // a visszavont cikkhez ugrunk (ha benne van a listában; ha nem, a jelenlegi helyre szúrjuk be)
     let p = allIds.indexOf(a.id);
     if (p < 0) { allIds.splice(idx, 0, a.id); p = idx; }
     idx = p; await renderCard();
+  } catch (e) { toast('❌ ' + errText(e), 4000); }
+  finally { busy = false; }
+}
+// 🧠 triage-lista: csak az indoklást menti (a döntés, a védelem és a radar státusza nem változik), utána a következő cikk
+async function doSaveReason() {
+  const r = currentRec(); if (!r || r.kind !== 'tri' || busy) return;
+  busy = true;
+  try {
+    const reason = $('reason-input').value.trim(), old = r.tri.reason || '';
+    if (reason === old.trim()) { toast('Az indoklás nem változott', 1500); idx = (idx + 1) % allIds.length; await renderCard(); return; }
+    await run('triage', 'UPDATE decisions SET reason = ?, updated_at = ? WHERE id = ?', [reason, tsNow(), rid(r.id)]);
+    lastAction = { type: 'reason', id: r.id, old };
+    toast(reason ? '💾 Indoklás mentve' : '💾 Indoklás törölve', 1800);
+    if (tflt.noReason && reason) {                          // az „indoklás nélküli” listából kikerül
+      allIds.splice(idx, 1);
+      if (!allIds.length) { cur = null; showEmpty(); return; }
+      if (idx >= allIds.length) idx = 0;
+    } else idx = (idx + 1) % allIds.length;
+    await renderCard();
   } catch (e) { toast('❌ ' + errText(e), 4000); }
   finally { busy = false; }
 }
@@ -727,6 +873,7 @@ guardBtn('act-prot', doProtect);
 guardBtn('act-read', () => doDecide('olvasni'));
 guardBtn('act-save', () => doDecide('menteni'));
 guardBtn('act-del', () => doDecide('torolni'));
+guardBtn('act-reason-save', doSaveReason);
 $('btn-lock-apply').onclick = () => {
   const v = parseLock($('btn-lock-sec').value);
   if (v == null) { toast('⚠️ 0 és 10 közötti számot írj (másodperc)', 3000); $('btn-lock-sec').value = btnLockMs / 1000; return; }
@@ -789,7 +936,7 @@ function addTag(tag) {
   if (!arr.some(x => x.toLowerCase() === tag.toLowerCase())) { arr.push(tag); inp.value = arr.join(', '); }
 }
 $('btn-tag').onclick = () => {
-  const r = currentRec(); if (!r) { toast('⚠️ Nincs aktuális cikk'); return; }
+  const r = currentRec(); if (!r || r.kind === 'tri') { toast('⚠️ Nincs aktuális cikk'); return; }
   $('tags-article-title').textContent = r.title || r.url || '';
   $('tags-new-input').value = r.tags || '';
   $('tag-search').value = ''; $('tag-results').innerHTML = ''; $('tag-results-info').style.display = 'none';
@@ -889,8 +1036,9 @@ $('exp-run-btn').onclick = async () => {
     }
     for (let i = 0; i < ops.length; i += 1000) await HR.batch({ db: 'bm', ops: ops.slice(i, i + 1000) });
 
-    // exportált cikkek → törölni státusz + mai dátum a Hír-Radarban (mint az asztali programban)
-    const rops = items.map(x => ({ sql: "UPDATE memory SET status = 'DELETED', add_date = ? WHERE rowid = ?", params: [today, x[0]] }));
+    // exportált cikkek → törölni státusz + mai dátum a Hír-Radarban (mint az asztali programban).
+    // A védettség átment a BM-be, ezért itt megszűnik: védett és 🗑 cikk nem létezhet, és a végleges törlés is eltávolíthatja.
+    const rops = items.map(x => ({ sql: "UPDATE memory SET status = 'DELETED', protected = 0, add_date = ? WHERE rowid = ?", params: [today, x[0]] }));
     for (let i = 0; i < rops.length; i += 1000) await HR.batch({ db: 'radar', ops: rops.slice(i, i + 1000) });
 
     lastAction = null; allTagsCache = null;
@@ -992,7 +1140,7 @@ try { HR.addListener('shared', handleShared); } catch { /* böngészőben nincs 
 // ── összevonás az asztali adatbázisokkal ───────────────────────────────────────
 const DEFAULT_MERGE_DIR = '/storage/emulated/0/Norbi/Osszevonas';
 const mergeUi = createMerge({
-  $, HR, q, qVal, run, toast, fmt, esc, errText, showModal, getPath, lsSet, lsDel, dirOf, pad, ensureBm,
+  $, HR, q, qVal, run, toast, fmt, esc, errText, showModal, getPath, lsGet, lsSet, lsDel, dirOf, pad, ensureBm,
   defaultDir: DEFAULT_MERGE_DIR, mergeDir: () => lsGet('hr_path_merge', '') || DEFAULT_MERGE_DIR,
   isRadarOpen: () => radarOpen, isTriageOpen: () => triageOpen,
   onDone: async () => { allTagsCache = null; allTagsLoading = null; cmapCache = null; lastAction = null; await loadRecords(); scheduleStats(0); refreshDeletableCount(); },

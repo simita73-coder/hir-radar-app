@@ -1,8 +1,14 @@
-# Hír-Radar Mobil (Android, v5.2)
+# Hír-Radar Mobil (Android, v5.3)
 
 A `hr_mobil_v4.0.html` (Hír-Radar cikkválogató) és a `triage_mobil_v1_0.html` (döntés + indoklás naplózás) egyesítése,
 natív SQLite-tal: a telefon tárhelyén lévő adatbázisokat közvetlenül olvassa és írja, nincs fájlválasztás, export vagy kézi visszamásolás.
 Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevonást (v5.1-től) az app maga végzi (lásd lent).
+
+## Újdonságok a v5.3-ban
+- **🧠 Triage-lista** a 4. sor első gombjaként: a triage.db döntései szűrhetők (döntés, AI-eltérés, csak indoklás nélküliek), és az indoklás utólag írható / szerkeszthető **💾 Indoklás mentése**-sel – a döntés nem változik (lásd lent).
+- **Összevonás:** a telefon triage.db-jében már eldöntött cikkeket (a végleg törölteket is) nem hozza vissza az asztali adatbázisból; az előnézet mutatja a kimaradók számát.
+- **Védett + 🗑 hiba javítva:** törlésre jelölt cikk nem védhető; az exportált védett cikk védettsége a radarban megszűnik (a BM-ben marad); ⚙️-ben **🔧 Javítás** gomb a már meglévő ilyen cikkekre; az összevonás is javítja őket.
+- Hat gomb a 4. sorban: keskenyebb gombok, a hosszú számok (pl. `433 520`) kisebb betűvel.
 
 ## Újdonságok a v5.2-ben
 - **Szűrőgombok** (🔐 💙 📖 🗑 ✨): magasabbak, és alattuk látszik a darabszámuk.
@@ -28,7 +34,7 @@ Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevo
 **Fejléc:** ▲ gombsorok elrejtése · 🌙/☀️ téma · **📤 N** mentés a BM-be (N = a 💙 és 📖 jelölt cikkek száma)
 **1. sor:** ⚙️ beállítások · ↩ visszavonás · ⬇/⬆ dátum szerint (első nyomás: legújabb elöl) · 🔀 véletlen · 📁 rovat szűrő
 **Keresés:** legalább 3 karakter; a „Miben" gombbal: cím / rovat / dátum / URL, teljes szó. Az ékezetes betűk kis- és nagybetűs alakja egyezik (`őrült` = `ŐRÜLT`).
-**2. sor:** 🔐 védett · 💙 menteni · 📖 olvasni · 🗑 törölni · ✨ mind (új + 💙 + 📖). A gombok alatt a darabszám: 🔒 védett · 💙 · 📖 · 🗑 · ✨ alatt a 🟢 új (még el nem döntött) cikkek száma. Alattuk a Σ összes cikk, a 🧠 triage-döntések és a 📍 pozíció / lista hossza látszik.
+**4. sor (módok):** 🧠 triage-lista · 🔐 védett · 💙 menteni · 📖 olvasni · 🗑 törölni · ✨ mind (új + 💙 + 📖). A gombok alatt a darabszám: 🧠 a triage-döntések száma · 🔒 védett · 💙 · 📖 · 🗑 · ✨ alatt a 🟢 új (még el nem döntött) cikkek száma (a hosszú számok, pl. `433 520`, kisebb betűvel, hogy hat gombnál is elférjenek). Alattuk a Σ összes cikk és a 📍 pozíció / lista hossza látszik.
 **Kártya alatt:** 💬 **Miért?** mező (indoklás) és a 🏷 **címke** gomb
 **Alul:** 🌐 megnyitás az alapértelmezett böngészőben (Vivaldi) · 🔒 védelem · 📖 olvasni · 💙 menteni · 🗑 törölni
 Lapozás: húzás balra/jobbra a cikken.
@@ -50,7 +56,8 @@ A 💙 / 📖 / 🗑 gomb **egyszerre** két helyre ír:
 - Ugyanaz a gomb újra: a cikk visszaáll (`SEEN`, döntés nélkül); az indoklás megmarad.
 - Döntés után az app automatikusan a következő cikkre lép.
 - **Dupla érintés elleni védelem:** ugyanaz az alsó gomb (🔒 📖 💙 🗑) az új cikk megjelenésétől számított 2 mp-ig nem nyomható újra (közben halványabb), hogy a következő cikk címét el tudd olvasni. Másik gomb azonnal nyomható. A ↩ és a 🌐 nincs korlátozva. Az idő a ⚙️ Beállításokban átírható (másodperc, 0–10; 0 = ki).
-- Védett cikk nem törölhető. A 🔒 mindkét adatbázisban átállítja a védettséget.
+- **Védett és 🗑 kizárja egymást:** védett cikk nem törölhető (🗑 gomb), és törlésre jelölt cikk nem védhető (🔒 gomb: figyelmeztetés, előbb állítsd vissza). A védelem levétele mindig működik. A 🔒 mindkét adatbázisban átállítja a védettséget.
+- Ha régebbről mégis maradt védett + 🗑 cikk: ⚙️ → **🔧 Védett és törlésre jelölt cikkek → Javítás** 🟢 újra állítja őket (a védelem marad, a triage-döntés nem változik). Az összevonás is javítja őket.
 - A kártyán látszik a triage-ben tárolt döntés és (ha van) az AI döntése/indoklása; az indoklás előtöltődik a mezőbe.
 - A lapozás nem ment: ha beírtál indoklást, de nem döntöttél, az app figyelmeztet, hogy nem mentődött.
 - ↩ az utolsó műveletet (döntés vagy védelem) mindkét adatbázisban visszavonja.
@@ -64,21 +71,30 @@ Ha a BM-mappában (vagy a Hír-Radar mappában) van `tag_case_map.json` (a BM c�
 A 💙 és 📖 jelölt cikkek bekerülnek a `bookmarks.db`-be, mint az asztali Hír-Radar „Export → BM" funkciójánál:
 kategória = rovat, státusz = „ÚJ FOGÁS (Radar)", domain az URL-ből, a címkék a `custom_tags`-be, védettség átmegy, az 📖 cikkek olvasásra várónak (`is_read=1`) kerülnek.
 Ha a cikk már a BM-ben van: nem készül másolat; a védettség (csak beállítható, levenni nem), az olvasásra jelölés és a címkék (a meglévőkhöz hozzáadva) frissülnek; a „cím és státusz is frissüljön" négyzettel a cím és a státusz is.
-Utána az exportált cikkek a Hír-Radarban 🗑 státuszba kerülnek (mai dátummal), így a lista fogy, a BM gyarapszik. A triage-döntések megmaradnak.
+Utána az exportált cikkek a Hír-Radarban 🗑 státuszba kerülnek (mai dátummal), így a lista fogy, a BM gyarapszik. A **védett** cikkek védettsége a BM-be átmegy, a Hír-Radarban viszont megszűnik (védett cikk nem lehet 🗑), így a végleges törlés őket is eltávolítja. A triage-döntések megmaradnak.
 
 ## Megosztás
 Böngészőben (Vivaldi) Megosztás → **Hír-Radar** → felugrik az ablak: webcím, cím, rovat (a domain korábbi cikkei alapján kitalálja), 💙 menteni / 📖 olvasni, 🔒 védett, indoklás. Mentéskor a radar_memory.db-be és a triage.db-be is bekerül. Ha a cikk már megvan, jelzi, és a mentés felülírja.
+
+## 🧠 Triage-lista (utólagos indoklás)
+A 4. sor első gombja (🧠) a `triage.db` döntéseit listázza – a végleg törölt cikkek is benne vannak (a kártya a triage-sorból épül). Az első koppintás belép és megnyitja a szűrőt, a következő (már triage-módban) csak a szűrőt.
+- **Szűrő:** az én döntésem (💙 / 📖 / 🗑 / ❓, több is; egyik sem = mind) · 🤖 AI-döntés (mind / **⚠️ másként döntött, mint én** / ugyanúgy / nincs) · **✍️ csak az indoklás nélküliek**. Az ablak alján élő darabszám. A 🧠 gombon `●` jelzi az aktív szűrőt.
+- A 📁 rovat-szűrő (a triage `domain` mezője szerint), a keresés (cím / rovat / dátum / URL) és a ⬇/⬆/🔀 rendezés itt is működik.
+- A kártyán: a döntésed, a Hír-Radar-beli státusz (vagy „nincs a radar_memory.db-ben”) és az AI döntése / indoklása. A 💬 mezőbe a meglévő indoklás töltődik.
+- **💾 Indoklás mentése:** csak a triage `reason` mezőjét írja (a döntés, a védelem és a radar státusza nem változik), utána a következő cikk jön. Az „indoklás nélküli” szűrőnél a kész cikk kikerül a listából. A ↩ visszavonja az utolsó indoklás-mentést.
+- Ebben a módban a 💙 📖 🗑 🔒 gombok és a 🏷 címke nem látszik, így a döntés véletlenül sem változik. Visszalépés: bármelyik másik mód gombja.
 
 ## 🔀 Összevonás az asztali adatbázisokkal (⚙️ → 🔀 Összevonás megnyitása)
 1. Másold az asztali `radar_memory.db`, `bookmarks.db` és/vagy `triage.db` fájlt a telefon `Norbi/Osszevonas/` mappájába (a mappa a felületen átírható). Ha van, tedd mellé a `tag_case_map.json`-t is (a betűszavak írásmódjához; ha ott nincs, a BM- vagy a Hír-Radar mappában is keresi).
 2. **🔎 Fájlok keresése**: bejelölheted, mely adatbázisok vegyenek részt. Csak a bejelöltek változnak.
 3. **Bookmarks, leíró mezők**: ha egy közös könyvjelző címe / kategóriája / tags / jegyzete eltér, melyik oldal értéke maradjon (alapértelmezés: **a telefoné**; ha a PC-n tisztítottad a címkéket és az asztali fájl a tisztított, válaszd az asztalit). Az előnézet kiírja, hány könyvjelzőnél van ilyen eltérés. A címkék, az olvasott / törlésre vár / védett állapot mindkét oldalról egyesül.
-4. **📋 Előnézet** (semmit sem ír), majd **✅ Összevonás indítása**.
+4. **🧠 Ne hozza vissza a triage-ban már eldöntött cikkeket** (alapból be): a telefon `triage.db`-jében szereplő (💙 📖 🗑) cikkek – a telefonon végleg törölteket és exportáltakat is – nem kerülnek vissza az asztali adatbázisból, csak a valóban új cikkek. A döntés nélküli és a ❓ bizonytalan cikkek bekerülnek. Az előnézet kiírja, hány asztali cikk marad ki emiatt.
+5. **📋 Előnézet** (semmit sem ír), majd **✅ Összevonás indítása**.
 
 Biztonság: indítás előtt minden bejelölt telefonos adatbázisról másolat készül az `Osszevonas/mentes/` mappába (`<név>_elotte_ÉÉÉÉHHNN_ÓÓPPMM.db`, adatbázisonként az utolsó 2 marad meg). Ha a másolat nem sikerül (pl. nincs hely), az adott adatbázist nem érinti. Az írás tranzakcióban fut: hiba esetén visszagörget, a telefon adatbázisa változatlan marad. Az asztali fájlokat az app csak olvassa. Az összevonás újrafuttatva ugyanazt az eredményt adja (nem duplikál).
 
 Szabályok (azonosak a PC-s DB Kezelő 4.1-gyel):
-- **Hír-Radar**: státusz-sorrend `DELETED` > `READING` > `MARKED` > `SEEN` > `EXPORTED`; a védettség „vagy" (védett cikk nem maradhat törölt); a cikk dátuma törölt / exportált végállapotnál annak az oldalnak a dátuma, amelyik ezt a státuszt hordozza (ha mindkettő, a későbbi), egyébként a korábbi nem üres dátum; a címkék egyesülnek; a `fetch_log` soronként a nagyobb darabszámot tartja.
+- **Hír-Radar**: státusz-sorrend `DELETED` > `READING` > `MARKED` > `SEEN` > `EXPORTED`; a védettség „vagy" (védett cikk nem maradhat törölt: az összevonás után ilyen sor nem marad, 🟢 újra javul); a telefon triage-jében eldöntött, csak az asztalon lévő cikkek kimaradnak (lásd fent); a cikk dátuma törölt / exportált végállapotnál annak az oldalnak a dátuma, amelyik ezt a státuszt hordozza (ha mindkettő, a későbbi), egyébként a korábbi nem üres dátum; a címkék egyesülnek; a `fetch_log` soronként a nagyobb darabszámot tartja.
 - **Bookmarks**: az URL azonosít (azonos URL-ű többszörös sorok azonosító-sorrendben párosodnak); állapot-sorrend `törlésre vár` > `olvasott` > normál; védettség „vagy"; a jegyzetek egyesülnek; a `deleted_log` két oldala egyesül; a csak az asztalon meglévő könyvjelzők bekerülnek.
 - **Triage**: a kulcs `source` + `article_key`; döntés-sorrend `menteni` > `olvasni` > `törölni` > `bizonytalan` > nincs; az AI-mezők a nyertes oldalról; `created_at` a korábbi, `updated_at` a későbbi.
 
@@ -93,7 +109,7 @@ Korlátok:
 ## Beállítások (⚙️)
 - adatbázis-útvonalak (+ állapot), engedély;
 - **dupla érintés elleni védelem** ideje (másodperc, számmező + Alkalmaz);
-- **Törölni jelöltek végleges törlése**: a 🗑 státuszú, nem védett cikkek véglegesen törlődnek a radar_memory.db-ből (megerősítéssel). Figyelem: a törlés az összefésülésnél nem „terjed át" az asztali adatbázisra, és ha a telefon adatbázisa váltja le az asztalit, a törölt cikkeket a Hír-Radar újra „újként" letöltheti;
+- **Törölni jelöltek végleges törlése**: a 🗑 státuszú, nem védett cikkek véglegesen törlődnek a radar_memory.db-ből (megerősítéssel). Figyelem: a törlés az összefésülésnél nem „terjed át" az asztali adatbázisra – de az összevonás a telefon triage.db-je alapján (alapbeállítás) nem hozza vissza a már eldöntött cikkeket. Ha a telefon adatbázisa váltja le az asztalit, a törölt cikkeket a Hír-Radar újra „újként" letöltheti;
 - **összevonás** az asztali adatbázisokkal (lásd fent);
 - színek.
 

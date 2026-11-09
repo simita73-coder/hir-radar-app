@@ -133,6 +133,7 @@ export function createMerge(env) {
     triage: { file: 'triage.db',       icon: '🧠', name: 'Triage',    phone: () => getPath('triage') },
   };
   const KEYS = Object.keys(DB);
+  const lsGet = env.lsGet || (() => '');
   const st = { dir: '', previewKey: null, running: false, cmap: {}, cmapPath: null };
 
   const colInfo = async (handle, schema, table) => (await q(handle, `PRAGMA ${schema}.table_info(${table})`));
@@ -194,12 +195,33 @@ export function createMerge(env) {
       ON a.timestamp IS b.timestamp AND a.feed_name IS b.feed_name AND a.count IS b.count
       WHERE b.n > COALESCE(a.n, 0)`;
 
+  // A telefon triage.db-jében már eldöntött (menteni / olvasni / törölni) URL-ek: az asztali sorok közül ezek nem kerülnek vissza
+  // (a végleg törölt cikkek így nem jönnek vissza újként). Visszatérés: a döntések száma, vagy -1, ha a szűrés ki van kapcsolva.
+  const skipOn = () => !!$('mg-skip-decided').checked;
+  async function prepDecided() {
+    if (!skipOn() || !env.isTriageOpen()) return -1;
+    await HR.exec({ db: 'radar', sql: 'CREATE TEMP TABLE IF NOT EXISTS _decided (url TEXT PRIMARY KEY)' });
+    await HR.exec({ db: 'radar', sql: 'DELETE FROM temp._decided' });
+    const rows = await q('triage', "SELECT article_key FROM decisions WHERE source = 'hr' AND decision IN ('menteni', 'olvasni', 'torolni')");
+    await batchAll('radar', rows.map(r => ({ sql: 'INSERT OR IGNORE INTO temp._decided (url) VALUES (?)', params: [r[0]] })));
+    return rows.length;
+  }
+  const dropDecided = async () => { try { await HR.exec({ db: 'radar', sql: 'DROP TABLE IF EXISTS temp._decided' }); } catch { /* nem végzetes */ } };
+  const IS_DECIDED = 'EXISTS (SELECT 1 FROM temp._decided dd WHERE dd.url = x.url)';
+  const ONLY_B = `NOT EXISTS (SELECT 1 FROM main.memory m WHERE m.url = x.url)`;
+
   async function radarPreview() {
     const c = await radarCtx();
+    const nDec = await prepDecided();
+    try {
     const nA = await qVal('radar', 'SELECT COUNT(*) FROM main.memory');
     const nB = await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory`);
-    const onlyB = await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory x WHERE NOT EXISTS (SELECT 1 FROM main.memory m WHERE m.url = x.url)`);
-    const both = nB - onlyB;
+    const onlyAll = await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory x WHERE ${ONLY_B}`);
+    const skipped = nDec >= 0 ? await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory x WHERE ${ONLY_B} AND ${IS_DECIDED}`) : 0;
+    const onlyB = onlyAll - skipped;
+    const both = nB - onlyAll;
+    const pdA = await qVal('radar', "SELECT COUNT(*) FROM main.memory WHERE status = 'DELETED' AND COALESCE(protected, 0) <> 0");
+    const pdB = await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory x WHERE COALESCE(NULLIF(${c.X.status}, ''), 'SEEN') = 'DELETED' AND COALESCE(${c.X.protected}, 0) <> 0`);
     const diff = await qVal('radar', `SELECT COUNT(*) FROM main.memory m CROSS JOIN ${ATT}.memory x ON x.url = m.url WHERE ${c.differs}`);
     const conf = await qVal('radar', `SELECT COUNT(*) FROM main.memory m CROSS JOIN ${ATT}.memory x ON x.url = m.url WHERE ${c.conflict}`);
     let fl = '';
@@ -212,22 +234,31 @@ export function createMerge(env) {
     }
     return [`Telefon: <b>${fmt(nA)}</b> cikk · asztali: <b>${fmt(nB)}</b> cikk`,
       `Csak az asztalin: <b>${fmt(onlyB)}</b> (bekerül) · csak a telefonon: <b>${fmt(nA - both)}</b> · közös: <b>${fmt(both)}</b>`,
-      `Eltérő közös cikk: <b>${fmt(diff)}</b> (ebből státusz/védelem eltér: <b>${fmt(conf)}</b> – a szabály dönt)`, fl].filter(Boolean);
+      nDec >= 0 ? `🧠 A triage-ban már eldöntött, ezért <b>kimarad</b>: <b>${fmt(skipped)}</b> asztali cikk (a telefon triage.db-jében ${fmt(nDec)} döntés van)`
+        : (skipOn() ? '⚠️ A telefon triage.db-je nincs megnyitva, ezért a „már eldöntött cikkek kihagyása” nem működik' : ''),
+      `Eltérő közös cikk: <b>${fmt(diff)}</b> (ebből státusz/védelem eltér: <b>${fmt(conf)}</b> – a szabály dönt)`,
+      pdA + pdB ? `🔧 Védett és egyben 🗑 sor (nem lehet): telefon <b>${fmt(pdA)}</b> · asztali <b>${fmt(pdB)}</b> → 🟢 újra javul` : '', fl].filter(Boolean);
+    } finally { await dropDecided(); }
   }
 
   async function radarRun(log) {
     const c = await radarCtx();
     const { X } = c;
-    const res = { inserted: 0, updated: 0, statusChanged: 0, tagsChanged: 0, fl: 0 };
-    return inTx('radar', async () => {
-      // 1) csak az asztalin lévő cikkek
+    const res = { inserted: 0, skipped: 0, fixed: 0, updated: 0, statusChanged: 0, tagsChanged: 0, fl: 0 };
+    const nDec = await prepDecided();
+    try {
+    return await inTx('radar', async () => {
+      // 1) csak az asztalin lévő cikkek (a triage-ban már eldöntöttek kimaradnak; védett + 🗑 sor nem jöhet át: 🟢 újként kerül be)
       const n0 = await qVal('radar', 'SELECT COUNT(*) FROM main.memory');
+      if (nDec >= 0) res.skipped = await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory x WHERE ${ONLY_B} AND ${IS_DECIDED}`);
+      const stX = `COALESCE(NULLIF(${X.status}, ''), 'SEEN')`;
       await run('radar', `INSERT INTO main.memory (url, source, title, status, add_date, protected, custom_tags)
-        SELECT x.url, COALESCE(${X.source}, ''), COALESCE(${X.title}, ''), COALESCE(NULLIF(${X.status}, ''), 'SEEN'), COALESCE(${X.add_date}, ''),
+        SELECT x.url, COALESCE(${X.source}, ''), COALESCE(${X.title}, ''),
+               CASE WHEN COALESCE(${X.protected}, 0) <> 0 AND ${stX} = 'DELETED' THEN 'SEEN' ELSE ${stX} END, COALESCE(${X.add_date}, ''),
                CASE WHEN COALESCE(${X.protected}, 0) <> 0 THEN 1 ELSE 0 END, COALESCE(${X.tags}, '')
-        FROM ${ATT}.memory x WHERE NOT EXISTS (SELECT 1 FROM main.memory m WHERE m.url = x.url)`);
+        FROM ${ATT}.memory x WHERE ${ONLY_B}${nDec >= 0 ? ` AND NOT ${IS_DECIDED}` : ''}`);
       res.inserted = (await qVal('radar', 'SELECT COUNT(*) FROM main.memory')) - n0;
-      log(`  új cikk az asztaliról: ${fmt(res.inserted)}`);
+      log(`  új cikk az asztaliról: ${fmt(res.inserted)}${nDec >= 0 ? ` (kihagyva, a triage-ban már eldöntött: ${fmt(res.skipped)})` : ''}`);
 
       // 2) a közös, eltérő cikkek: szabály szerinti összevonás
       let last = -1, seen = 0;
@@ -258,6 +289,11 @@ export function createMerge(env) {
       }
       log(`  közös cikk frissítve: ${fmt(res.updated)} (státusz: ${fmt(res.statusChanged)}, címke: ${fmt(res.tagsChanged)})`, 2);
 
+      // 2b) védett és egyben 🗑 sor nem létezhet (azonos sorokat a 2. lépés nem néz): 🟢 újra javul, a védelem marad
+      const fx = await run('radar', "UPDATE main.memory SET status = 'SEEN' WHERE status = 'DELETED' AND COALESCE(protected, 0) <> 0");
+      res.fixed = fx.changes || 0;
+      if (res.fixed) log(`  védett és 🗑 sor javítva: ${fmt(res.fixed)} (🟢 újra)`);
+
       // 3) letöltési napló: kulcsonként a nagyobb példányszám marad
       if (c.hasFlD) {
         await HR.exec({ db: 'radar', sql: 'CREATE TABLE IF NOT EXISTS main.fetch_log (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, feed_name TEXT, count INTEGER)' });
@@ -272,6 +308,7 @@ export function createMerge(env) {
       }
       return res;
     });
+    } finally { await dropDecided(); }
   }
 
   // ── Bookmarks ────────────────────────────────────────────────────────────────
@@ -515,7 +552,7 @@ export function createMerge(env) {
   // ── felület ──────────────────────────────────────────────────────────────────
   const selected = () => KEYS.filter(k => $('mg-' + k).checked && !$('mg-' + k).disabled);
   const prim = () => ($('mg-prim-phone').checked ? 'phone' : 'desk');
-  const keyNow = () => JSON.stringify([st.dir, selected(), prim()]);
+  const keyNow = () => JSON.stringify([st.dir, selected(), prim(), $('mg-skip-decided').checked]);
   const refreshButtons = () => {
     $('merge-scan-btn').disabled = st.running;
     $('merge-preview-btn').disabled = st.running || !selected().length;
@@ -622,6 +659,8 @@ export function createMerge(env) {
   $('merge-preview-btn').onclick = () => preview().catch(e => { $('merge-preview').innerHTML = '❌ ' + esc(errText(e)); st.running = false; refreshButtons(); });
   $('merge-run-btn').onclick = () => runAll().catch(e => { toast('❌ ' + errText(e), 4000); st.running = false; refreshButtons(); });
   KEYS.forEach(k => $('mg-' + k).addEventListener('change', invalidate));
+  $('mg-skip-decided').checked = lsGet('hr_merge_skip_decided', '1') !== '0';
+  $('mg-skip-decided').addEventListener('change', () => { lsSet('hr_merge_skip_decided', $('mg-skip-decided').checked ? '1' : '0'); invalidate(); });
   $('mg-prim-desk').addEventListener('change', invalidate);
   $('mg-prim-phone').addEventListener('change', invalidate);
   $('merge-dir').addEventListener('input', invalidate);
