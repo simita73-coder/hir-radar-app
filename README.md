@@ -6,6 +6,8 @@ Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevo
 
 ## Újdonságok a v5.1-ben
 - **📁 Rovat szűrő**: rovat szerint választod ki, mi jelenjen meg (gyorsabb, mint a véletlen sorrend, ha pl. a sport és tudomány rovatot gyorsan törlöd).
+- **Szűrőgombok** (🔐 💙 📖 🗑 ✨): magasabbak, és alattuk látszik a darabszámuk.
+- **🛡 Véletlen dupla érintés ellen**: az alsó 🔒 / 📖 / 💙 / 🗑 gomb ugyanaz csak 2 mp múlva nyomható újra (lásd lent).
 - **🔀 Összevonás az asztali adatbázisokkal** a ⚙️ Beállításokban: radar_memory.db, bookmarks.db, triage.db, a PC-s DB Kezelő 4.1 szabályaival.
 
 ## Fájlok a telefonon (alapértelmezett útvonalak, a ⚙️ Beállításokban átírhatók)
@@ -23,7 +25,7 @@ Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevo
 **Fejléc:** ▲ gombsorok elrejtése · 🌙/☀️ téma · **📤 N** mentés a BM-be (N = a 💙 és 📖 jelölt cikkek száma)
 **1. sor:** ⚙️ beállítások · ↩ visszavonás · ⬇/⬆ dátum szerint (első nyomás: legújabb elöl) · 🔀 véletlen · 📁 rovat szűrő
 **Keresés:** legalább 3 karakter; a „Miben" gombbal: cím / rovat / dátum / URL, teljes szó. Az ékezetes betűk kis- és nagybetűs alakja egyezik (`őrült` = `ŐRÜLT`).
-**2. sor:** 🔐 védett · 💙 menteni · 📖 olvasni · 🗑 törölni · ✨ mind (új + 💙 + 📖)
+**2. sor:** 🔐 védett · 💙 menteni · 📖 olvasni · 🗑 törölni · ✨ mind (új + 💙 + 📖). A gombok alatt a darabszám: 🔒 védett · 💙 · 📖 · 🗑 · ✨ alatt a 🟢 új (még el nem döntött) cikkek száma. Alattuk a Σ összes cikk, a 🧠 triage-döntések és a 📍 pozíció / lista hossza látszik.
 **Kártya alatt:** 💬 **Miért?** mező (indoklás) és a 🏷 **címke** gomb
 **Alul:** 🌐 megnyitás az alapértelmezett böngészőben (Vivaldi) · 🔒 védelem · 📖 olvasni · 💙 menteni · 🗑 törölni
 Lapozás: húzás balra/jobbra a cikken.
@@ -44,6 +46,7 @@ A 💙 / 📖 / 🗑 gomb **egyszerre** két helyre ír:
 
 - Ugyanaz a gomb újra: a cikk visszaáll (`SEEN`, döntés nélkül); az indoklás megmarad.
 - Döntés után az app automatikusan a következő cikkre lép.
+- **Dupla érintés elleni védelem:** ugyanaz az alsó gomb (🔒 📖 💙 🗑) az új cikk megjelenésétől számított 2 mp-ig nem nyomható újra (közben halványabb), hogy a következő cikk címét el tudd olvasni. Másik gomb azonnal nyomható. A ↩ és a 🌐 nincs korlátozva. Az idő a ⚙️ Beállításokban átírható (másodperc, 0–10; 0 = ki).
 - Védett cikk nem törölhető. A 🔒 mindkét adatbázisban átállítja a védettséget.
 - A kártyán látszik a triage-ben tárolt döntés és (ha van) az AI döntése/indoklása; az indoklás előtöltődik a mezőbe.
 - A lapozás nem ment: ha beírtál indoklást, de nem döntöttél, az app figyelmeztet, hogy nem mentődött.
@@ -86,6 +89,7 @@ Korlátok:
 
 ## Beállítások (⚙️)
 - adatbázis-útvonalak (+ állapot), engedély;
+- **dupla érintés elleni védelem** ideje (másodperc, számmező + Alkalmaz);
 - **Törölni jelöltek végleges törlése**: a 🗑 státuszú, nem védett cikkek véglegesen törlődnek a radar_memory.db-ből (megerősítéssel). Figyelem: a törlés az összefésülésnél nem „terjed át" az asztali adatbázisra, és ha a telefon adatbázisa váltja le az asztalit, a törölt cikkeket a Hír-Radar újra „újként" letöltheti;
 - **összevonás** az asztali adatbázisokkal (lásd fent);
 - színek.

@@ -261,6 +261,7 @@ async function showSettings() {
   $('path-radar').value = getPath('radar'); $('path-triage').value = getPath('triage'); $('path-bm').value = getPath('bm');
   const c = getStoredColors();
   Object.entries(COLOR_INPUT_MAP).forEach(([k, key]) => { $('col-' + k).value = c[key]; $('prev-' + k).style.background = c[key]; });
+  $('btn-lock-sec').value = btnLockMs / 1000;
   showModal('settings-modal-overlay');
   await refreshPerm();
   await refreshDeletableCount();
@@ -498,7 +499,7 @@ const modeBtnMap = { prot: 'btn-mode-prot', saved: 'btn-mode-saved', read: 'btn-
 const modeCls = { prot: 'on-purple', saved: 'on', read: 'on-amber', del: 'on-red', all: 'on' };
 function setMode(mode, focusId) {
   viewMode = mode;
-  Object.keys(modeBtnMap).forEach(m => { const b = $(modeBtnMap[m]); b.className = 'nb'; if (m === mode) b.classList.add(modeCls[m]); });
+  Object.keys(modeBtnMap).forEach(m => { const b = $(modeBtnMap[m]); b.className = 'nb mb'; if (m === mode) b.classList.add(modeCls[m]); });
   idx = 0; scheduleStats(300); return loadRecords(focusId);
 }
 Object.entries(modeBtnMap).forEach(([m, id]) => { $(id).onclick = () => setMode(m); });
@@ -700,10 +701,36 @@ async function doUndo() {
   } catch (e) { toast('❌ ' + errText(e), 4000); }
   finally { busy = false; }
 }
-$('act-prot').onclick = doProtect;
-$('act-read').onclick = () => doDecide('olvasni');
-$('act-save').onclick = () => doDecide('menteni');
-$('act-del').onclick = () => doDecide('torolni');
+// Véletlen dupla érintés ellen: ugyanaz a döntés-gomb a tényleges végrehajtás (az új cikk megjelenése) után
+// csak btnLockMs elteltével nyomható újra (ennyi idő kell a következő cím elolvasásához). 0 = ki.
+const BTN_LOCK_DEFAULT = 2;                                   // másodperc
+const parseLock = v => { const t = String(v ?? '').trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) && n >= 0 && n <= 10 ? Math.round(n * 10) / 10 : null; };
+let btnLockMs = (parseLock(lsGet('hr_btn_lock', '')) ?? BTN_LOCK_DEFAULT) * 1000;
+const lockAt = {};
+function guardBtn(id, fn) {
+  const el = $(id);
+  el.onclick = async () => {
+    if (btnLockMs > 0 && Date.now() - (lockAt[id] ?? -1e9) < btnLockMs) return;   // túl gyors ismétlés: figyelmen kívül marad
+    const acts = !busy && !!currentRec();                     // csak a ténylegesen végrehajtott nyomás indítja a tiltást
+    try { await fn(); }
+    finally {
+      if (acts && btnLockMs > 0) {
+        lockAt[id] = Date.now(); el.classList.add('cool');
+        setTimeout(() => el.classList.remove('cool'), btnLockMs);
+      }
+    }
+  };
+}
+guardBtn('act-prot', doProtect);
+guardBtn('act-read', () => doDecide('olvasni'));
+guardBtn('act-save', () => doDecide('menteni'));
+guardBtn('act-del', () => doDecide('torolni'));
+$('btn-lock-apply').onclick = () => {
+  const v = parseLock($('btn-lock-sec').value);
+  if (v == null) { toast('⚠️ 0 és 10 közötti számot írj (másodperc)', 3000); $('btn-lock-sec').value = btnLockMs / 1000; return; }
+  btnLockMs = v * 1000; lsSet('hr_btn_lock', String(v)); $('btn-lock-sec').value = v;
+  toast(v > 0 ? `🛡 Ugyanaz a gomb ${v} mp után nyomható újra` : '🛡 A védelem ki van kapcsolva');
+};
 $('btn-undo').onclick = doUndo;
 
 // ── megnyitás az alapértelmezett böngészőben ───────────────────────────────────
