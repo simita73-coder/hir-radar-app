@@ -277,8 +277,45 @@ $('fix-prot-btn').onclick = async () => {
     await loadRecords(); scheduleStats(0); refreshFixCount(); refreshDeletableCount();
   } catch (e) { toast('❌ ' + errText(e), 4000); }
 };
+// 🧠 hiányzó triage-sorok pótlása: a 💙 / 📖 cikkekhez (az asztali Hír-Radarban eldöntöttekhez), amelyeknek nincs triage-sora.
+// A 🗑 kimarad: az exportált cikk is 🗑, abból nem derül ki a döntés. A meglévő triage-sorokhoz és a radarhoz nem nyúl.
+async function triFillList() {
+  if (!radarOpen || !triageOpen) return null;
+  const have = new Set((await q('triage', "SELECT article_key FROM decisions WHERE source = 'hr'")).map(r => r[0]));
+  const rows = await q('radar', "SELECT url, source, title, add_date, status, protected FROM memory WHERE status IN ('MARKED', 'READING')");
+  return rows.filter(r => r[0] && !have.has(r[0]));
+}
+async function refreshTriFillCount() {
+  const btn = $('fill-tri-btn');
+  try {
+    const list = await triFillList();
+    if (list === null) { btn.textContent = '🧠 Pótlás'; btn.disabled = true; return; }
+    btn.disabled = !list.length;
+    btn.textContent = list.length ? `🧠 Pótlás (${fmt(list.length)} cikk)` : '✔ Nincs hiányzó triage-sor';
+  } catch { btn.disabled = true; }
+}
+$('fill-tri-btn').onclick = async () => {
+  try {
+    const list = await triFillList();
+    if (list === null) { toast('⚠️ A radar és a triage adatbázis is legyen megnyitva'); return; }
+    if (!list.length) { toast('Nincs hiányzó triage-sor'); return; }
+    const nm = list.filter(r => r[4] === 'MARKED').length, nr = list.length - nm;
+    if (!confirm(`${fmt(list.length)} cikkhez nincs triage-sor (💙 ${fmt(nm)} · 📖 ${fmt(nr)}).\n\nLétrehozom őket indoklás nélkül (menteni / olvasni döntéssel). A meglévő triage-sorokhoz és a radarhoz nem nyúlok. Mehet?`)) return;
+    const now = tsNow();
+    const ops = list.map(r => ({
+      sql: "INSERT INTO decisions (source, article_key, title, domain, date, decision, reason, protected, created_at, updated_at) VALUES ('hr', ?, ?, ?, ?, ?, '', ?, ?, ?)",
+      params: [r[0], r[2] || '', r[1] || '', String(r[3] || '').slice(0, 10), r[4] === 'MARKED' ? 'menteni' : 'olvasni', r[5] ? 1 : 0, now, now],
+    }));
+    for (let i = 0; i < ops.length; i += 500) await HR.batch({ db: 'triage', ops: ops.slice(i, i + 500) });
+    lastAction = null;
+    toast(`🧠 Pótolva: ${fmt(list.length)} triage-sor`, 3500);
+    scheduleStats(0); refreshTriFillCount();
+    if (viewMode === 'tri') await loadRecords();
+  } catch (e) { toast('❌ ' + errText(e), 4000); }
+};
 async function refreshDeletableCount() {
   refreshFixCount();
+  refreshTriFillCount();
   const btn = $('del-all-btn');
   if (!radarOpen) { btn.textContent = '🗑 Összes törölni jelölt cikk törlése'; btn.disabled = true; return; }
   try {

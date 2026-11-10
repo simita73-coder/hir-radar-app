@@ -1,8 +1,11 @@
-# Hír-Radar Mobil (Android, v5.3)
+# Hír-Radar Mobil (Android, v5.4)
 
 A `hr_mobil_v4.0.html` (Hír-Radar cikkválogató) és a `triage_mobil_v1_0.html` (döntés + indoklás naplózás) egyesítése,
 natív SQLite-tal: a telefon tárhelyén lévő adatbázisokat közvetlenül olvassa és írja, nincs fájlválasztás, export vagy kézi visszamásolás.
 Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevonást (v5.1-től) az app maga végzi (lásd lent).
+
+## Újdonságok a v5.4-ben
+- **🧠 Hiányzó triage-sorok pótlása** (⚙️ Beállítások): a 💙 / 📖 cikkekhez, amelyeknek nincs triage-sora (pl. az asztali Hír-Radarban döntötted el őket, és az összevonás hozta át), létrehoz egyet indoklás nélkül (menteni / olvasni). A 🗑 cikkeket kihagyja, mert az exportált cikk is 🗑, abból nem derül ki a döntés. A meglévő triage-sorokhoz és a radarhoz nem nyúl. Utána a 🧠 listában a „csak az indoklás nélküliek” szűrővel pótolhatod az indoklást.
 
 ## Újdonságok a v5.3-ban
 - **🧠 Triage-lista** a 4. sor első gombjaként: a triage.db döntései szűrhetők (döntés, AI-eltérés, csak indoklás nélküliek), és az indoklás utólag írható / szerkeszthető **💾 Indoklás mentése**-sel – a döntés nem változik (lásd lent).
