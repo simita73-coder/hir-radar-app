@@ -207,6 +207,8 @@ body.light .rv-sort{background:#fff;border-color:rgba(0,0,0,0.22)}
 .top-tag{background:#000;color:var(--tag-chip-color);border:1px solid var(--tag-chip-color);border-radius:var(--r3);padding:6px 14px;font-size:12px}
 body.light .top-tag{background:#fff}
 .top-tag:active{opacity:.7}
+.top-tag.new-tag{border-style:dashed}
+.actbtn.offline{outline:2px solid var(--tag-chip-color);outline-offset:-2px}
 
 /* színek */
 .color-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
@@ -397,6 +399,8 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
         <input type="text" id="tags-new-input" class="txt-input" placeholder="Vesszővel elválasztva..." style="flex:1" autocapitalize="off" autocomplete="off" spellcheck="false">
         <button class="tags-save-btn" id="tags-save-btn">💾 Mentés</button>
       </div>
+      <div class="tags-section-label" id="tags-suggest-info" style="display:none"></div>
+      <div class="tags-chips" id="tags-suggest"></div>
       <p class="info">Mentéskor a címkék egységes alakra kerülnek (kisbetű, kivéve a betűszavakat; ismétlések és szélső jelek nélkül) – ugyanígy, mint a BM tisztításánál.</p>
     </div>
   </div>
@@ -435,6 +439,18 @@ body.light .hex-input{background:#fff;border-color:rgba(0,0,0,0.2)}
         <button class="big-btn" id="paths-save-btn">💾 Mentés és adatbázisok újranyitása</button>
         <button class="big-btn2" id="paths-default-btn">↩ Alapértelmezett útvonalak</button>
         <div class="info" id="db-status-info"></div>
+      </div>
+
+      <div class="section">
+        <h3>📄 MHTML-mentés (Vivaldi MHTML Mentő)</h3>
+        <div class="field-label">Az MHTML fájlok mappája – ha egy cikkhez van ilyen fájl, a 📄 gomb azt nyitja meg</div>
+        <input type="text" id="path-mhtml" class="txt-input mono" autocapitalize="off" autocomplete="off" spellcheck="false">
+        <button class="big-btn2" id="mhtml-path-save-btn">💾 Mappa mentése</button>
+        <div class="check-row" style="border-bottom:none"><input type="checkbox" id="mhtml-only-missing" checked><label for="mhtml-only-missing" style="font-size:14px">Csak azok, amelyekhez még nincs MHTML fájl</label></div>
+        <div class="box" id="mhtml-summary">–</div>
+        <button class="big-btn" id="mhtml-list-btn" disabled>📄 Lista kiírása</button>
+        <div class="box" id="mhtml-result" style="display:none"></div>
+        <div class="info">A listába minden 💙 menteni, 📖 olvasni és 🔒 védett cikk kerül (sor: azonosító|dátum|cím|webcím), a Hír-Radar mappába, mhtml_lista_….txt néven. A Vivaldi MHTML Mentő ezt tölti be; a fájlok neve az azonosítót tartalmazza (…_idHR…_), így a telefon az URL alapján megtalálja őket.</div>
       </div>
 
       <div class="section">

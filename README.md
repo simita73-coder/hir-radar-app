@@ -1,8 +1,15 @@
-# Hír-Radar Mobil (Android, v5.4)
+# Hír-Radar Mobil (Android, v5.5)
 
 A `hr_mobil_v4.0.html` (Hír-Radar cikkválogató) és a `triage_mobil_v1_0.html` (döntés + indoklás naplózás) egyesítése,
 natív SQLite-tal: a telefon tárhelyén lévő adatbázisokat közvetlenül olvassa és írja, nincs fájlválasztás, export vagy kézi visszamásolás.
 Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevonást (v5.1-től) az app maga végzi (lásd lent).
+
+## Újdonságok a v5.5-ben
+- **Megosztás: csak az új cikk kerül be.** A megosztott webcímet az asztali URL Import szabályával ellenőrzi (kisbetű, utm_… követő paraméterek nélkül, záró `/` nélkül; a `#töredék` megkülönböztet). Ha már van ilyen cikk a Hír-Radarban, a doboz kiírja a státuszát, és a **Hozzáadás gomb tiltott** – meglévő cikket a megosztás sosem ír felül. Ha a cikk nincs a radarban, de a triage.db-ben van róla döntés (pl. végleg törölted), figyelmeztet, de hozzáadható. Az URL a mezőben átírható, az ellenőrzés újra lefut.
+- **🏷 Címkék: javaslatok gépelés közben.** A „A cikk címkéi" mezőbe gépelve az utolsó vesszőig tartó szó 3. karakterétől megjelennek a meglévő címkék (az asztali sorrend: pontos egyezés, „ezzel kezdődik", „tartalmazza"; gyakoriság szerint). Koppintásra a begépelt töredék helyére kerül a címke. Ha nincs pontos egyezés, **➕ új: …** elem is megjelenik (a megszokott tisztítással). A felső kereső is ezt a sorrendet használja.
+- **📄 MHTML-lista a Vivaldi MHTML Mentőnek** (⚙️ → MHTML-mentés): kiírja a 💙 menteni, 📖 olvasni és 🔒 védett cikkeket a Hír-Radar mappába `mhtml_lista_ÉÉÉÉHHNN_ÓÓPP.txt` néven (sor: `azonosító|dátum|cím|webcím`, a bővítmény új formátuma). Alapból csak azok jönnek, amelyekhez még nincs MHTML fájl. Az azonosító a webcímből számolt `HR` + 14 hexa jegy, a bővítmény ezt teszi a fájlnévbe (`…_idHR…_domain.mhtml`).
+- **Offline megnyitás:** ha egy cikkhez van MHTML fájl a `Norbi/BM-manager/MHTML` mappában (almappákban is keres; a mappa a ⚙️-ban átírható), a megnyitó gomb **📄**, és az offline fájlt nyitja meg; különben 🌐 és a böngésző, mint eddig. Ha az offline fájl nem nyílik meg, a böngészőre vált. A fájlokat az URL-ből számolt azonosító alapján találja meg, a mappa tartalmáról egyszeri indexet készít (100 ezer fájlnál is gyors), és csak akkor olvassa újra, ha a mappa változott.
+- **Natív rész (új APK kell):** `writeText`, `findMhtml`, `openFile` a `HrPlugin.java`-ban; a `patch_android.py` gondoskodik a FileProvider-ről (a böngészőnek content:// címet kell adni).
 
 ## Újdonságok a v5.4-ben
 - **🧠 Hiányzó triage-sorok pótlása** (⚙️ Beállítások): a 💙 / 📖 cikkekhez, amelyeknek nincs triage-sora (pl. az asztali Hír-Radarban döntötted el őket, és az összevonás hozta át), létrehoz egyet indoklás nélkül (menteni / olvasni). A 🗑 cikkeket kihagyja, mert az exportált cikk is 🗑, abból nem derül ki a döntés. A meglévő triage-sorokhoz és a radarhoz nem nyúl. Utána a 🧠 listában a „csak az indoklás nélküliek” szűrővel pótolhatod az indoklást.
@@ -77,7 +84,7 @@ Ha a cikk már a BM-ben van: nem készül másolat; a védettség (csak beállí
 Utána az exportált cikkek a Hír-Radarban 🗑 státuszba kerülnek (mai dátummal), így a lista fogy, a BM gyarapszik. A **védett** cikkek védettsége a BM-be átmegy, a Hír-Radarban viszont megszűnik (védett cikk nem lehet 🗑), így a végleges törlés őket is eltávolítja. A triage-döntések megmaradnak.
 
 ## Megosztás
-Böngészőben (Vivaldi) Megosztás → **Hír-Radar** → felugrik az ablak: webcím, cím, rovat (a domain korábbi cikkei alapján kitalálja), 💙 menteni / 📖 olvasni, 🔒 védett, indoklás. Mentéskor a radar_memory.db-be és a triage.db-be is bekerül. Ha a cikk már megvan, jelzi, és a mentés felülírja.
+Böngészőben (Vivaldi) Megosztás → **Hír-Radar** → felugrik az ablak: webcím, cím, rovat (a domain korábbi cikkei alapján kitalálja), 💙 menteni / 📖 olvasni, 🔒 védett, indoklás. Mentéskor a radar_memory.db-be és a triage.db-be is bekerül. Ha a cikk már megvan a Hír-Radarban (normalizált URL-egyezés, mint az asztali URL Importnál), jelzi, és a Hozzáadás gomb tiltott – a megosztás meglévő cikket nem ír felül (v5.5-től).
 
 ## 🧠 Triage-lista (utólagos indoklás)
 A 4. sor első gombja (🧠) a `triage.db` döntéseit listázza – a végleg törölt cikkek is benne vannak (a kártya a triage-sorból épül). Az első koppintás belép és megnyitja a szűrőt, a következő (már triage-módban) csak a szűrőt.
@@ -114,6 +121,7 @@ Korlátok:
 - **dupla érintés elleni védelem** ideje (másodperc, számmező + Alkalmaz);
 - **Törölni jelöltek végleges törlése**: a 🗑 státuszú, nem védett cikkek véglegesen törlődnek a radar_memory.db-ből (megerősítéssel). Figyelem: a törlés az összefésülésnél nem „terjed át" az asztali adatbázisra – de az összevonás a telefon triage.db-je alapján (alapbeállítás) nem hozza vissza a már eldöntött cikkeket. Ha a telefon adatbázisa váltja le az asztalit, a törölt cikkeket a Hír-Radar újra „újként" letöltheti;
 - **összevonás** az asztali adatbázisokkal (lásd fent);
+- **MHTML-mentés:** az MHTML mappa útvonala, a lista kiírása;
 - színek.
 
 ## Egyéb
@@ -130,8 +138,8 @@ Az APK a többi appoddal azonos állandó aláírókulccsal készül (`android-e
 ## Fájlok
 - `www/index.html`, `src/main.js` – a felület és a logika (a build `www/app.js`-t készít belőle)
 - `src/tags.js`, `src/merge.js` – címke-segédek, illetve az összevonás (a DB Kezelő 4.1 szabályai)
-- `android-extra/HrPlugin.java` – natív rész: több SQLite adatbázis egyszerre, azonosító-listák, ékezetes keresés, linknyitás, megosztás fogadása, fájlmásolás / listázás / törlés a biztonsági mentésekhez
+- `android-extra/HrPlugin.java` – natív rész: több SQLite adatbázis egyszerre, azonosító-listák, ékezetes keresés, linknyitás, megosztás fogadása, fájlmásolás / listázás / törlés / írás, MHTML-fájlok keresése és megnyitása a biztonsági mentésekhez
 - `android-extra/MainActivity.java` – a plugin regisztrálása, képernyő bekapcsolva tartása
 - `android-extra/debug.keystore` – állandó aláírókulcs
-- `scripts/patch_android.py` – a generált Android-projekt kiegészítése (engedélyek, megosztás-fogadás, plugin, aláírás)
+- `scripts/patch_android.py` – a generált Android-projekt kiegészítése (engedélyek, megosztás-fogadás, FileProvider, plugin, aláírás)
 - `build-apk.yml` (és a `.github/workflows/` alatti példánya) – a GitHub Actions munkafolyamat

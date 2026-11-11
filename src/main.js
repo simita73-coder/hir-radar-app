@@ -17,6 +17,7 @@ const DEFAULT_PATHS = {
   radar: '/storage/emulated/0/Norbi/Hir-Radar/radar_memory.db',
   triage: '/storage/emulated/0/Norbi/Hir-Radar/triage.db',
   bm: '/storage/emulated/0/Norbi/BM-manager/bookmarks.db',
+  mhtml: '/storage/emulated/0/Norbi/BM-manager/MHTML',          // az offline (MHTML) cikkek mappája – nem adatbázis
 };
 const BM_STATUS = 'ÚJ FOGÁS (Radar)';
 const NO_SOURCE = 'Rovaton kívüli (Vegyes)';
@@ -328,9 +329,11 @@ async function showSettings() {
   const c = getStoredColors();
   Object.entries(COLOR_INPUT_MAP).forEach(([k, key]) => { $('col-' + k).value = c[key]; $('prev-' + k).style.background = c[key]; });
   $('btn-lock-sec').value = btnLockMs / 1000;
+  $('mhtml-result').style.display = 'none';
   showModal('settings-modal-overlay');
   await refreshPerm();
   await refreshDeletableCount();
+  refreshMhtmlSummary();
 }
 $('btn-colors').onclick = showSettings;
 $('color-apply-btn').onclick = () => {
@@ -535,6 +538,7 @@ async function renderCard() {
 }
 
 function paintCard(r) {
+  refreshOpenBtn(r);
   $('card-content').style.display = 'block'; $('empty-state').style.display = 'none';
   $('card-domain').textContent = (r.source || '–').toUpperCase();
   $('card-date').textContent = r.date || '–';
@@ -919,11 +923,90 @@ $('btn-lock-apply').onclick = () => {
 };
 $('btn-undo').onclick = doUndo;
 
-// ── megnyitás az alapértelmezett böngészőben ───────────────────────────────────
+// ── MHTML: offline mentett cikkek ─────────────────────────────────────────────
+// A fájlnévben a cikk URL-jéből számolt azonosító van (…_idHR<14 hexa>_domain.mhtml), így a Vivaldi MHTML Mentő
+// ugyanazt a fájlt adja, a telefon pedig az URL-ből megtalálja – a sorazonosítótól (rowid) függetlenül.
+function cyrb53(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507); h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507); h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+const mhtmlId = url => 'HR' + cyrb53(normalizeUrlFetch(url)).toString(16).padStart(14, '0');
+// {azonosító → fájl útvonala} a megadott URL-ekhez; hiba / nincs mappa esetén üres
+async function findOffline(urls) {
+  const ids = [...new Set(urls.map(mhtmlId))];
+  try {
+    const r = await HR.findMhtml({ dir: getPath('mhtml'), ids });
+    return (r && r.found) || {};
+  } catch { return {}; }
+}
+let openTok = 0;
+async function refreshOpenBtn(r) {
+  const t = ++openTok, b = $('act-open');
+  b.textContent = '🌐'; b.title = 'Megnyitás a böngészőben'; b.classList.remove('offline');
+  if (!r || !r.url) return;
+  const f = await findOffline([r.url]);
+  if (t !== openTok || !f[mhtmlId(r.url)]) return;
+  b.textContent = '📄'; b.title = 'Megnyitás offline (MHTML fájl)'; b.classList.add('offline');
+}
 $('act-open').onclick = async () => {
   const r = currentRec();
   if (!r || !r.url) { toast('⚠️ Nincs webcím'); return; }
-  try { await HR.openUrl({ url: r.url }); } catch (e) { toast('❌ ' + errText(e), 4000); }
+  try {
+    const path = (await findOffline([r.url]))[mhtmlId(r.url)];
+    if (path) {
+      try { await HR.openFile({ path }); return; }
+      catch (e) { toast('⚠️ Az offline fájl nem nyílt meg (' + errText(e) + ') – megnyitom a böngészőben', 4000); }
+    }
+    await HR.openUrl({ url: r.url });
+  } catch (e) { toast('❌ ' + errText(e), 4000); }
+};
+
+// ── 📄 MHTML-lista a Vivaldi MHTML Mentőnek ────────────────────────────────────
+// Az „aktuális" cikkek: minden 💙 menteni, 📖 olvasni és 🔒 védett cikk. Sor: azonosító|dátum|cím|webcím
+const MHTML_COND = "(status IN ('MARKED','READING') OR protected = 1)";
+let mhtmlRows = [], mhtmlHave = {};
+function mhtmlWanted() { return $('mhtml-only-missing').checked ? mhtmlRows.filter(r => !mhtmlHave[r.id]) : mhtmlRows; }
+function paintMhtmlSummary() {
+  const miss = mhtmlRows.filter(r => !mhtmlHave[r.id]).length;
+  const n = mhtmlWanted().length;
+  $('mhtml-summary').innerHTML = `💙📖🔒 cikk összesen: <b>${fmt(mhtmlRows.length)}</b> · offline már megvan: <b>${fmt(mhtmlRows.length - miss)}</b> · még nincs: <b>${fmt(miss)}</b><br>A listába kerül: <b>${fmt(n)}</b> cikk`;
+  $('mhtml-list-btn').disabled = !n;
+}
+async function refreshMhtmlSummary() {
+  $('path-mhtml').value = getPath('mhtml');
+  if (!radarOpen) { $('mhtml-summary').textContent = 'Nincs megnyitott adatbázis'; $('mhtml-list-btn').disabled = true; return; }
+  $('mhtml-summary').textContent = 'Számolás…';
+  try {
+    const rows = await q('radar', `SELECT url, title, add_date FROM memory WHERE ${MHTML_COND} ORDER BY add_date`);
+    mhtmlRows = rows.map(([url, title, date]) => ({ url, title: title || '', date: date || '', id: mhtmlId(url) }));
+    const r = await HR.findMhtml({ dir: getPath('mhtml'), ids: mhtmlRows.map(x => x.id), refresh: true }).catch(() => null);
+    mhtmlHave = (r && r.found) || {};
+    paintMhtmlSummary();
+    if (r && r.exists === false) $('mhtml-summary').innerHTML += '<br>⚠️ Az MHTML mappa nem létezik – minden cikk „még nincs mentve"-nek számít.';
+  } catch (e) { $('mhtml-summary').textContent = '❌ ' + errText(e); }
+}
+$('mhtml-only-missing').onchange = paintMhtmlSummary;
+$('mhtml-path-save-btn').onclick = async () => {
+  const v = $('path-mhtml').value.trim().replace(/\/+$/, '');
+  if (v && v !== DEFAULT_PATHS.mhtml) lsSet('hr_path_mhtml', v); else lsDel('hr_path_mhtml');
+  toast('💾 MHTML mappa mentve'); await refreshMhtmlSummary(); refreshOpenBtn(cur);
+};
+$('mhtml-list-btn').onclick = async () => {
+  const rows = mhtmlWanted();
+  if (!rows.length) { toast('Nincs mit kiírni'); return; }
+  const clean = t => String(t).replace(/[|\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const text = rows.map(r => `${r.id}|${r.date}|${clean(r.title)}|${r.url.trim()}`).join('\n') + '\n';
+  const d = new Date();
+  const path = `${dirOf(getPath('radar'))}/mhtml_lista_${dateStr(d).replace(/-/g, '')}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+  try {
+    await HR.writeText({ path, text });
+    const box = $('mhtml-result'); box.style.display = '';
+    box.innerHTML = `✅ Kiírva: <b>${fmt(rows.length)}</b> cikk<br><span class="mono">${esc(path)}</span><br>Töltsd be a Vivaldi MHTML Mentő bővítményben.`;
+    toast(`📄 Lista kiírva (${fmt(rows.length)} cikk)`, 3500);
+  } catch (e) { toast('❌ ' + errText(e), 5000); }
 };
 
 // ── címkék ──────────────────────────────────────────────────────────────────────
@@ -933,20 +1016,32 @@ async function ensureBm() {
   bmOpened = true;
 }
 
+let allTagCounts = new Map();                         // kisbetűs alak → [megjelenített alak, darab]
 async function loadAllTags() {
   if (allTagsCache) return allTagsCache;
   if (!allTagsLoading) {
     allTagsLoading = (async () => {
-      const cnt = new Set();
-      const add = rows => { for (const [t] of rows) { if (!t) continue; for (let tag of String(t).split(',')) { tag = tag.trim(); if (tag) cnt.add(tag); } } };
+      const cnt = new Map();
+      const add = rows => { for (const [t] of rows) { if (!t) continue; for (let tag of String(t).split(',')) { tag = tag.trim(); if (!tag) continue; const k = tag.toLowerCase(); const e = cnt.get(k); if (e) e[1]++; else cnt.set(k, [tag, 1]); } } };
       try { await ensureBm(); add(await q('bm', "SELECT custom_tags FROM bookmarks WHERE custom_tags IS NOT NULL AND custom_tags != ''")); }
       catch { bmOpened = false; /* a BM nem érhető el: csak a Hír-Radar saját címkéi */ }
       try { add(await q('radar', "SELECT custom_tags FROM memory WHERE custom_tags IS NOT NULL AND custom_tags != ''")); } catch { /* nem végzetes */ }
-      allTagsCache = [...cnt].sort((a, b) => a.localeCompare(b, 'hu'));
+      allTagCounts = cnt;
+      allTagsCache = [...cnt.values()].map(e => e[0]).sort((a, b) => a.localeCompare(b, 'hu'));
       return allTagsCache;
     })().finally(() => { allTagsLoading = null; });
   }
   return allTagsLoading;
+}
+// az asztali search_tag_counts sorrendje: pontos egyezés, „ezzel kezdődik", „tartalmazza"; csoportonként gyakoriság szerint
+function rankTags(qs) {
+  const exact = [], starts = [], contains = [];
+  for (const [k, e] of allTagCounts) {
+    if (k === qs) exact.push(e); else if (k.startsWith(qs)) starts.push(e); else if (k.includes(qs)) contains.push(e);
+  }
+  const cmp = (a, b) => b[1] - a[1] || a[0].toLowerCase().localeCompare(b[0].toLowerCase(), 'hu');
+  starts.sort(cmp); contains.sort(cmp);
+  return { exact, hits: [...exact, ...starts, ...contains] };
 }
 
 const TAG_LIMIT = 400;
@@ -960,12 +1055,49 @@ async function updateTagResults() {
   let tags;
   try { tags = await loadAllTags(); } catch (e) { info.textContent = '❌ ' + errText(e); return; }
   if (tok !== tagSearchTok) return;
-  const hits = tags.filter(t => t.toLowerCase().includes(qs));
+  const hits = rankTags(qs).hits.map(e => e[0]);
   box.innerHTML = hits.slice(0, TAG_LIMIT).map(t => `<span class="top-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
   info.textContent = hits.length ? `${fmt(hits.length)} találat${hits.length > TAG_LIMIT ? ` (az első ${TAG_LIMIT} látszik – írj még be karaktert)` : ''} – koppints a hozzáadáshoz:` : 'Nincs ilyen címke.';
 }
 $('tag-search').addEventListener('input', updateTagResults);
 $('tag-results').addEventListener('click', e => { const t = e.target.closest('.top-tag'); if (t) addTag(t.dataset.tag); });
+
+// javaslatok a „A cikk címkéi" mezőbe gépelve: az utolsó vesszőig tartó szó 3. karakterétől
+const SUG_LIMIT = 40;
+let sugTok = 0;
+const lastFrag = v => v.slice(v.lastIndexOf(',') + 1).trim();
+async function updateTagSuggest() {
+  const tok = ++sugTok;
+  const box = $('tags-suggest'), info = $('tags-suggest-info');
+  const frag = lastFrag($('tags-new-input').value);
+  if (frag.length < 3) { box.innerHTML = ''; info.style.display = 'none'; return; }
+  info.style.display = ''; if (!allTagsCache) info.textContent = 'Címkék betöltése…';
+  try { await loadAllTags(); } catch (e) { info.textContent = '❌ ' + errText(e); return; }
+  const cmap = await getCmap().catch(() => null);
+  if (tok !== sugTok) return;
+  const qs = frag.toLowerCase();
+  const { exact, hits } = rankTags(qs);
+  const have = new Set($('tags-new-input').value.split(',').slice(0, -1).map(t => t.trim().toLowerCase()));
+  const list = hits.map(e => e[0]).filter(t => !have.has(t.toLowerCase()));
+  const newForm = normalizeTags(frag, cmap);
+  const showNew = newForm && !exact.length && !have.has(newForm.toLowerCase());
+  box.innerHTML = (showNew ? `<span class="top-tag new-tag" data-new="1" data-tag="${esc(newForm)}">➕ új: ${esc(newForm)}</span>` : '') +
+    list.slice(0, SUG_LIMIT).map(t => `<span class="top-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
+  info.textContent = list.length
+    ? `${fmt(list.length)} javaslat${list.length > SUG_LIMIT ? ` (az első ${SUG_LIMIT} látszik – írj még be karaktert)` : ''} – koppints a beillesztéshez:`
+    : (showNew ? 'Nincs ilyen címke – újként felvehető:' : 'Nincs több javaslat.');
+}
+$('tags-new-input').addEventListener('input', updateTagSuggest);
+$('tags-suggest').addEventListener('click', e => {
+  const t = e.target.closest('.top-tag'); if (!t) return;
+  const inp = $('tags-new-input');
+  const parts = inp.value.split(',').map(x => x.trim());
+  parts.pop();                                         // az éppen gépelt töredék helyére kerül a választott címke
+  if (!parts.some(x => x.toLowerCase() === t.dataset.tag.toLowerCase())) parts.push(t.dataset.tag);
+  inp.value = parts.filter(Boolean).join(', ') + ', ';
+  $('tags-suggest').innerHTML = ''; $('tags-suggest-info').style.display = 'none'; sugTok++;
+  inp.focus();
+});
 
 function addTag(tag) {
   const inp = $('tags-new-input');
@@ -977,6 +1109,7 @@ $('btn-tag').onclick = () => {
   $('tags-article-title').textContent = r.title || r.url || '';
   $('tags-new-input').value = r.tags || '';
   $('tag-search').value = ''; $('tag-results').innerHTML = ''; $('tag-results-info').style.display = 'none';
+  $('tags-suggest').innerHTML = ''; $('tags-suggest-info').style.display = 'none'; sugTok++;
   showModal('tags-modal-overlay');
   loadAllTags().catch(() => { /* a keresésnél kiderül */ });       // háttérben előre betölti
 };
@@ -1113,13 +1246,79 @@ async function guessSource(url) {
   }
   return '';
 }
-async function findDup(url) {
-  const variants = [...new Set([url, url.replace(/\/+$/, ''), url.replace(/\/+$/, '') + '/'])];
-  const rows = await q('radar', `SELECT url, title, status FROM memory WHERE url IN (${variants.map(() => '?').join(',')}) LIMIT 1`, variants);
-  return rows.length ? { url: rows[0][0], title: rows[0][1] || '', status: rows[0][2] || '' } : null;
+// ── URL-normalizálás: az asztali Hír-Radar normalize_url_fetch átirata ──────────
+// kisbetű, követő paraméterek (utm_… stb.) nélkül, a #töredék marad, #töredék nélkül a záró / levágva
+const FETCH_TRACKING_PARAMS = new Set(['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'utm_reader',
+  'fbclid', 'gclid', 'partner', 'ref', 'source', 'mc_cid', 'mc_eid', 'trk', 'wt.mc_id', 'rss_feed']);
+function splitUrl(u) {
+  u = String(u || '').trim().toLowerCase();
+  let frag = '';
+  const hi = u.indexOf('#');
+  if (hi >= 0) { frag = u.slice(hi); u = u.slice(0, hi); if (frag === '#') frag = ''; }
+  let qs = '';
+  const qi = u.indexOf('?');
+  if (qi >= 0) { qs = u.slice(qi + 1); u = u.slice(0, qi); }
+  return { base: u, qs, frag };
 }
+export function normalizeUrlFetch(url) {
+  const { base, qs, frag } = splitUrl(url);
+  const kept = qs.split('&').filter(p => {
+    if (!p) return false;
+    let k = p.split('=')[0];
+    try { k = decodeURIComponent(k.replace(/\+/g, ' ')); } catch { /* marad */ }
+    return !FETCH_TRACKING_PARAMS.has(k.toLowerCase());
+  });
+  let r = base + (kept.length ? '?' + kept.join('&') : '') + frag;
+  if (!r.includes('#')) r = r.replace(/\/+$/, '');
+  return r;
+}
+const likeEsc = s => s.replace(/[\\%_]/g, c => '\\' + c);
+// a normalizált URL-lel egyező sor keresése: SQL-ben az URL elejére szűr, a pontos egyezést JS-ben dönti el
+async function findDupIn(db, table, col, extraWhere, url) {
+  const key = normalizeUrlFetch(url);
+  const pre = splitUrl(url).base.replace(/\/+$/, '');
+  if (!pre) return null;
+  const rows = await q(db, `SELECT ${col}, title, ${table === 'memory' ? 'status' : 'decision'} FROM ${table}
+    WHERE ${extraWhere}lower(${col}) LIKE ? ESCAPE '\\' ORDER BY length(${col}) LIMIT 300`, [likeEsc(pre) + '%']);
+  for (const r of rows) if (normalizeUrlFetch(r[0] || '') === key) return { url: r[0], title: r[1] || '', status: r[2] || '' };
+  return null;
+}
+const findDup = url => findDupIn('radar', 'memory', 'url', '', url);
+const findTriDup = url => findDupIn('triage', 'decisions', 'article_key', "source = 'hr' AND ", url);
 
-let shareDup = null;
+let shareDup = null, shareChecking = false;
+const DUP_LABEL = { SEEN: 'új', MARKED: '💙', READING: '📖', DELETED: '🗑', EXPORTED: 'exportált' };
+const TRI_LABEL = { menteni: '💙', olvasni: '📖', torolni: '🗑' };
+// a megosztott webcím ellenőrzése: csak az kerülhet be, ami még nincs a Hír-Radarban (mint az asztali URL Importnál)
+async function checkShareDup() {
+  const url = $('share-url').value.trim();
+  const box = $('share-dup'), btn = $('share-save-btn');
+  box.style.display = 'none'; shareDup = null;
+  if (!/^https?:\/\//i.test(url)) { btn.disabled = false; return; }
+  shareChecking = true; btn.disabled = true;
+  const my = url;
+  try {
+    const dup = await findDup(url);
+    if ($('share-url').value.trim() !== my) return;          // közben átírták – az új ellenőrzés dönt
+    shareDup = dup;
+    if (dup) {
+      box.className = 'box no';
+      box.textContent = `⛔ Ez a cikk már szerepel a Hír-Radarban (${DUP_LABEL[dup.status] || dup.status}): ${dup.title.slice(0, 80)}\nNem adom hozzá újra.`;
+      box.style.display = '';
+    } else if (triageOpen) {
+      const t = await findTriDup(url).catch(() => null);
+      if ($('share-url').value.trim() !== my) return;
+      if (t) {
+        box.className = 'box';
+        box.textContent = `ℹ️ A Hír-Radarban nincs, de a triage-ban már van döntés róla (${TRI_LABEL[t.status] || t.status}): ${t.title.slice(0, 80)}\nHozzáadhatod, ha mégis kell.`;
+        box.style.display = '';
+      }
+    }
+  } catch { /* nem végzetes: az ellenőrzés nélkül is menthető */ }
+  finally { if ($('share-url').value.trim() === my) { shareChecking = false; btn.disabled = !!shareDup; } }
+}
+let shareUrlTimer = null;
+$('share-url').addEventListener('input', () => { clearTimeout(shareUrlTimer); shareUrlTimer = setTimeout(checkShareDup, 400); });
 async function handleShared(d) {
   if (!d || !d.text) return;
   if (!radarOpen) { pendingShare = d; toast('A megosztott linket az adatbázis megnyitása után adom hozzá', 3500); return; }
@@ -1129,20 +1328,17 @@ async function handleShared(d) {
   $('share-source').value = NO_SOURCE; $('share-marked').checked = true; $('share-reading').checked = false; $('share-prot').checked = false;
   $('share-dup').style.display = 'none'; shareDup = null;
   showModal('share-modal-overlay');
+  await checkShareDup();
   try {
-    shareDup = await findDup(p.url);
-    if (shareDup) {
-      const lab = { SEEN: 'új', MARKED: '💙', READING: '📖', DELETED: '🗑', EXPORTED: 'exportált' }[shareDup.status] || shareDup.status;
-      $('share-dup').textContent = `Ez a cikk már szerepel a Hír-Radarban (${lab}): ${shareDup.title.slice(0, 80)}\nMentéskor a régi adatai felülíródnak.`;
-      $('share-dup').style.display = '';
-    }
     const g = await guessSource(p.url);
     if (g && $('share-source').value === NO_SOURCE) $('share-source').value = g;
   } catch { /* nem végzetes */ }
 }
 $('share-save-btn').onclick = async () => {
-  let url = $('share-url').value.trim(); const title = $('share-title').value.trim();
+  const url = $('share-url').value.trim(); const title = $('share-title').value.trim();
   if (!/^https?:\/\//i.test(url)) { toast('⚠️ Érvénytelen webcím'); return; }
+  if (shareChecking) { toast('Ellenőrzés folyamatban…'); return; }
+  if (shareDup) { toast('⛔ Ez a cikk már megvan a Hír-Radarban', 3000); return; }
   if (!title) { toast('⚠️ A cím nem lehet üres'); return; }
   if (!radarOpen) { toast('⚠️ Nincs megnyitott adatbázis'); return; }
   const status = $('share-reading').checked ? 'READING' : 'MARKED';
@@ -1152,10 +1348,11 @@ $('share-save-btn').onclick = async () => {
   const reason = $('share-reason').value.trim();
   const d = new Date(), date = `${dateStr(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   try {
-    if (shareDup) url = shareDup.url;                       // felülíráskor a tárolt URL-t használjuk
+    const again = await findDup(url);                       // végső védelem: meglévő cikket sosem írunk felül
+    if (again) { shareDup = again; checkShareDup(); toast('⛔ Ez a cikk már megvan a Hír-Radarban', 3000); return; }
     await run('radar',
       `INSERT INTO memory (url, source, title, status, add_date, protected) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(url) DO UPDATE SET source = excluded.source, title = excluded.title, status = excluded.status, add_date = excluded.add_date, protected = excluded.protected`,
+       ON CONFLICT(url) DO NOTHING`,
       [url, source, title, status, date, prot]);
     let note = '';
     if (triageOpen) {
@@ -1172,6 +1369,7 @@ $('share-save-btn').onclick = async () => {
   } catch (e) { toast('❌ ' + errText(e), 5000); }
 };
 window.__hrShare = handleShared;               // a teszteléshez
+window.__hrUtil = { normalizeUrlFetch, mhtmlId };
 try { HR.addListener('shared', handleShared); } catch { /* böngészőben nincs */ }
 
 // ── összevonás az asztali adatbázisokkal ───────────────────────────────────────

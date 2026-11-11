@@ -9,6 +9,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.Settings;
+import androidx.core.content.FileProvider;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -21,6 +22,12 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -679,6 +686,135 @@ public class HrPlugin extends Plugin {
             call.resolve();
         } catch (ActivityNotFoundException e) {
             call.reject("Nincs böngésző, amely megnyitná a címet");
+        } catch (Exception e) {
+            call.reject(msg(e));
+        }
+    }
+
+    // ------------------------------------------------------------------ szöveges fájl írása
+
+    /** UTF-8 szövegfájl írása (a mappát létrehozza, a meglévő fájlt felülírja). */
+    @PluginMethod
+    public void writeText(PluginCall call) {
+        try {
+            String path = call.getString("path", "");
+            String text = call.getString("text", "");
+            if (path == null || path.isEmpty()) { call.reject("Nincs útvonal"); return; }
+            File f = new File(path);
+            File parent = f.getParentFile();
+            if (parent != null) parent.mkdirs();
+            try (FileOutputStream os = new FileOutputStream(f)) {
+                os.write(text.getBytes(StandardCharsets.UTF_8));
+            }
+            JSObject o = new JSObject();
+            o.put("size", f.length());
+            call.resolve(o);
+        } catch (Exception e) {
+            call.reject(msg(e));
+        }
+    }
+
+    // ------------------------------------------------------------------ offline (MHTML) cikkek
+
+    // A fájlnévben szereplő azonosító: ..._idHR<14 hexa>_...  (a Vivaldi MHTML Mentő így nevezi el a fájlokat)
+    private static final Pattern MHTML_ID = Pattern.compile("_id(HR[0-9a-f]{14})_");
+    private final Map<String, String> mhtmlIdx = new HashMap<>();
+    private final List<File> mhtmlDirs = new ArrayList<>();
+    private String mhtmlRoot = null;
+    private long mhtmlSig = 0;
+
+    private long mhtmlSignature(File root) {
+        long sig = root.lastModified();
+        for (File d : mhtmlDirs) sig = sig * 31 + d.lastModified();
+        return sig;
+    }
+
+    /** A mappa (és almappái) fájlneveinek beolvasása; csak akkor fut újra, ha a mappa változott (vagy kérik). */
+    private synchronized void ensureMhtmlIndex(File root, boolean force) {
+        String key = root.getAbsolutePath();
+        if (!force && key.equals(mhtmlRoot) && mhtmlSignature(root) == mhtmlSig) return;
+        mhtmlIdx.clear();
+        mhtmlDirs.clear();
+        List<File> stack = new ArrayList<>();
+        stack.add(root);
+        while (!stack.isEmpty()) {
+            File dir = stack.remove(stack.size() - 1);
+            mhtmlDirs.add(dir);
+            String[] names = dir.list();
+            if (names == null) continue;
+            for (String n : names) {
+                String low = n.toLowerCase(Locale.ROOT);
+                if (low.endsWith(".mhtml") || low.endsWith(".mht")) {
+                    Matcher m = MHTML_ID.matcher(n);
+                    if (m.find()) mhtmlIdx.put(m.group(1), new File(dir, n).getAbsolutePath());
+                } else {
+                    File sub = new File(dir, n);
+                    if (sub.isDirectory()) stack.add(sub);          // csak a nem-MHTML nevekre kell fájlrendszer-lekérdezés
+                }
+            }
+        }
+        mhtmlRoot = key;
+        mhtmlSig = mhtmlSignature(root);
+    }
+
+    /** A megadott azonosítókhoz tartozó MHTML fájlok megkeresése: {exists, count, found: {azonosító: útvonal}}. */
+    @PluginMethod
+    public void findMhtml(PluginCall call) {
+        try {
+            String dir = call.getString("dir", "");
+            boolean refresh = Boolean.TRUE.equals(call.getBoolean("refresh", false));
+            JSArray ids = call.getArray("ids");
+            JSObject out = new JSObject();
+            JSObject found = new JSObject();
+            File root = new File(dir == null ? "" : dir);
+            if (!root.isDirectory()) {
+                out.put("exists", false);
+                out.put("count", 0);
+                out.put("found", found);
+                call.resolve(out);
+                return;
+            }
+            ensureMhtmlIndex(root, refresh);
+            if (ids != null) {
+                synchronized (this) {
+                    for (int i = 0; i < ids.length(); i++) {
+                        String id = ids.getString(i);
+                        String p = mhtmlIdx.get(id);
+                        if (p != null) found.put(id, p);
+                    }
+                }
+            }
+            out.put("exists", true);
+            out.put("count", mhtmlIdx.size());
+            out.put("found", found);
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject(msg(e));
+        }
+    }
+
+    /** Fájl megnyitása az erre alkalmas alkalmazással (MHTML → böngésző), FileProvider-en át. */
+    @PluginMethod
+    public void openFile(PluginCall call) {
+        try {
+            String path = call.getString("path", "");
+            File f = new File(path == null ? "" : path);
+            if (!f.isFile()) { call.reject("Nincs ilyen fájl: " + path); return; }
+            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+            String[] types = { "multipart/related", "application/x-mimearchive" };
+            for (String t : types) {
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(uri, t);
+                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    getContext().startActivity(i);
+                    call.resolve();
+                    return;
+                } catch (ActivityNotFoundException ignore) {
+                    // a következő típussal próbáljuk
+                }
+            }
+            call.reject("Nincs alkalmazás, amely megnyitná az MHTML fájlt");
         } catch (Exception e) {
             call.reject(msg(e));
         }

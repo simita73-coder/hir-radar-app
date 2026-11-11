@@ -6,6 +6,7 @@ A GitHub Actions futtatja, a projekt gyökeréből: python3 scripts/patch_androi
 """
 import json
 import pathlib
+import re
 import shutil
 import sys
 
@@ -43,8 +44,38 @@ if "android.intent.action.SEND" not in text:
         sys.exit("A manifestben nincs </activity>.")
     text = text.replace(marker, share_filter + "        " + marker, 1)
 
+# FileProvider: az offline (MHTML) fájlok megnyitásához a böngészőnek content:// címet kell adni.
+# A Capacitor sablonja általában már tartalmazza (${applicationId}.fileprovider + @xml/file_paths); ha nem, hozzáadjuk.
+if "androidx.core.content.FileProvider" not in text:
+    provider = """        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+"""
+    if "</application>" not in text:
+        sys.exit("A manifestben nincs </application>.")
+    text = text.replace("</application>", provider + "    </application>", 1)
+
 manifest.write_text(text, encoding="utf-8")
 print("Manifest rendben.")
+
+# a FileProvider-útvonalak: a teljes külső tárhely (/storage/emulated/0) legyen elérhető
+xml_dir = root / "app/src/main/res/xml"
+xml_dir.mkdir(parents=True, exist_ok=True)
+paths_xml = xml_dir / "file_paths.xml"
+if not paths_xml.exists() or not re.search(r'<external-path[^>]*path="\."', paths_xml.read_text(encoding="utf-8")):
+    paths_xml.write_text("""<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="hr_external" path="." />
+    <cache-path name="hr_cache" path="." />
+</paths>
+""", encoding="utf-8")
+print("FileProvider rendben.")
 
 # 2) fájlok a csomagnak megfelelő mappába
 pkg_dir = root / "app/src/main/java" / pathlib.Path(*app_id.split("."))
