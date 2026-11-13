@@ -1033,34 +1033,20 @@ async function loadAllTags() {
   }
   return allTagsLoading;
 }
-// az asztali search_tag_counts sorrendje: pontos egyezés, „ezzel kezdődik", „tartalmazza"; csoportonként gyakoriság szerint
+// A javaslatok sorrendje: pontos egyezés; egy szavas címkék (előbb „ezzel kezdődik", utána „tartalmazza");
+// végül a többszavas címkék (ugyanígy). Egy csoporton belül a gyakoribb van elöl, utána betűrend.
 function rankTags(qs) {
-  const exact = [], starts = [], contains = [];
+  const exact = [], sStart = [], sCont = [], mStart = [], mCont = [];
   for (const [k, e] of allTagCounts) {
-    if (k === qs) exact.push(e); else if (k.startsWith(qs)) starts.push(e); else if (k.includes(qs)) contains.push(e);
+    if (k === qs) { exact.push(e); continue; }
+    const single = !/\s/.test(k);
+    if (k.startsWith(qs)) (single ? sStart : mStart).push(e);
+    else if (k.includes(qs)) (single ? sCont : mCont).push(e);
   }
   const cmp = (a, b) => b[1] - a[1] || a[0].toLowerCase().localeCompare(b[0].toLowerCase(), 'hu');
-  starts.sort(cmp); contains.sort(cmp);
-  return { exact, hits: [...exact, ...starts, ...contains] };
+  for (const g of [sStart, sCont, mStart, mCont]) g.sort(cmp);
+  return { exact, hits: [...exact, ...sStart, ...sCont, ...mStart, ...mCont] };
 }
-
-const TAG_LIMIT = 400;
-let tagSearchTok = 0;
-async function updateTagResults() {
-  const tok = ++tagSearchTok;
-  const qs = $('tag-search').value.trim().toLowerCase();
-  const box = $('tag-results'), info = $('tag-results-info');
-  if (qs.length < 3) { box.innerHTML = ''; info.style.display = 'none'; return; }     // 3. karakterig semmit nem mutat
-  info.style.display = ''; if (!allTagsCache) info.textContent = 'Címkék betöltése…';
-  let tags;
-  try { tags = await loadAllTags(); } catch (e) { info.textContent = '❌ ' + errText(e); return; }
-  if (tok !== tagSearchTok) return;
-  const hits = rankTags(qs).hits.map(e => e[0]);
-  box.innerHTML = hits.slice(0, TAG_LIMIT).map(t => `<span class="top-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
-  info.textContent = hits.length ? `${fmt(hits.length)} találat${hits.length > TAG_LIMIT ? ` (az első ${TAG_LIMIT} látszik – írj még be karaktert)` : ''} – koppints a hozzáadáshoz:` : 'Nincs ilyen címke.';
-}
-$('tag-search').addEventListener('input', updateTagResults);
-$('tag-results').addEventListener('click', e => { const t = e.target.closest('.top-tag'); if (t) addTag(t.dataset.tag); });
 
 // javaslatok a „A cikk címkéi" mezőbe gépelve: az utolsó vesszőig tartó szó 3. karakterétől
 const SUG_LIMIT = 40;
@@ -1081,8 +1067,8 @@ async function updateTagSuggest() {
   const list = hits.map(e => e[0]).filter(t => !have.has(t.toLowerCase()));
   const newForm = normalizeTags(frag, cmap);
   const showNew = newForm && !exact.length && !have.has(newForm.toLowerCase());
-  box.innerHTML = (showNew ? `<span class="top-tag new-tag" data-new="1" data-tag="${esc(newForm)}">➕ új: ${esc(newForm)}</span>` : '') +
-    list.slice(0, SUG_LIMIT).map(t => `<span class="top-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join('');
+  box.innerHTML = list.slice(0, SUG_LIMIT).map(t => `<span class="top-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join('') +
+    (showNew ? `<span class="top-tag new-tag" data-new="1" data-tag="${esc(newForm)}">➕ új: ${esc(newForm)}</span>` : '');
   info.textContent = list.length
     ? `${fmt(list.length)} javaslat${list.length > SUG_LIMIT ? ` (az első ${SUG_LIMIT} látszik – írj még be karaktert)` : ''} – koppints a beillesztéshez:`
     : (showNew ? 'Nincs ilyen címke – újként felvehető:' : 'Nincs több javaslat.');

@@ -1,12 +1,15 @@
-# Hír-Radar Mobil (Android, v5.5)
+# Hír-Radar Mobil (Android, v5.5.1)
 
 A `hr_mobil_v4.0.html` (Hír-Radar cikkválogató) és a `triage_mobil_v1_0.html` (döntés + indoklás naplózás) egyesítése,
 natív SQLite-tal: a telefon tárhelyén lévő adatbázisokat közvetlenül olvassa és írja, nincs fájlválasztás, export vagy kézi visszamásolás.
 Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevonást (v5.1-től) az app maga végzi (lásd lent).
 
+## Újdonságok a v5.5.1-ben
+- **Címkejavaslatok új sorrendje:** pontos egyezés, utána az **egy szavas** címkék (előbb amelyek a begépelt szöveggel kezdődnek, pl. `bal` → baleset, balaton; majd amelyek tartalmazzák), végül a többszavas címkék (ugyanígy). Egy csoporton belül a gyakoribb van elöl. A **➕ új** elem a lista végére került. Ez a felső címkekeresőre is érvényes.
+
 ## Újdonságok a v5.5-ben
 - **Megosztás: csak az új cikk kerül be.** A megosztott webcímet az asztali URL Import szabályával ellenőrzi (kisbetű, utm_… követő paraméterek nélkül, záró `/` nélkül; a `#töredék` megkülönböztet). Ha már van ilyen cikk a Hír-Radarban, a doboz kiírja a státuszát, és a **Hozzáadás gomb tiltott** – meglévő cikket a megosztás sosem ír felül. Ha a cikk nincs a radarban, de a triage.db-ben van róla döntés (pl. végleg törölted), figyelmeztet, de hozzáadható. Az URL a mezőben átírható, az ellenőrzés újra lefut.
-- **🏷 Címkék: javaslatok gépelés közben.** A „A cikk címkéi" mezőbe gépelve az utolsó vesszőig tartó szó 3. karakterétől megjelennek a meglévő címkék (az asztali sorrend: pontos egyezés, „ezzel kezdődik", „tartalmazza"; gyakoriság szerint). Koppintásra a begépelt töredék helyére kerül a címke. Ha nincs pontos egyezés, **➕ új: …** elem is megjelenik (a megszokott tisztítással). A felső kereső is ezt a sorrendet használja.
+- **🏷 Címkék: javaslatok gépelés közben.** A „A cikk címkéi" mezőbe gépelve az utolsó vesszőig tartó szó 3. karakterétől megjelennek a meglévő címkék (sorrend: lásd a v5.5.1-et). Koppintásra a begépelt töredék helyére kerül a címke. Ha nincs pontos egyezés, **➕ új: …** elem is megjelenik (a megszokott tisztítással). A felső kereső is ezt a sorrendet használja.
 - **📄 MHTML-lista a Vivaldi MHTML Mentőnek** (⚙️ → MHTML-mentés): kiírja a 💙 menteni, 📖 olvasni és 🔒 védett cikkeket a Hír-Radar mappába `mhtml_lista_ÉÉÉÉHHNN_ÓÓPP.txt` néven (sor: `azonosító|dátum|cím|webcím`, a bővítmény új formátuma). Alapból csak azok jönnek, amelyekhez még nincs MHTML fájl. Az azonosító a webcímből számolt `HR` + 14 hexa jegy, a bővítmény ezt teszi a fájlnévbe (`…_idHR…_domain.mhtml`).
 - **Offline megnyitás:** ha egy cikkhez van MHTML fájl a `Norbi/BM-manager/MHTML` mappában (almappákban is keres; a mappa a ⚙️-ban átírható), a megnyitó gomb **📄**, és az offline fájlt nyitja meg; különben 🌐 és a böngésző, mint eddig. Ha az offline fájl nem nyílik meg, a böngészőre vált. A fájlokat az URL-ből számolt azonosító alapján találja meg, a mappa tartalmáról egyszeri indexet készít (100 ezer fájlnál is gyors), és csak akkor olvassa újra, ha a mappa változott.
 - **Natív rész (új APK kell):** `writeText`, `findMhtml`, `openFile` a `HrPlugin.java`-ban; a `patch_android.py` gondoskodik a FileProvider-ről (a böngészőnek content:// címet kell adni).
