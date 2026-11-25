@@ -87,12 +87,17 @@ async function getCmap() {
 }
 
 // ── séma ────────────────────────────────────────────────────────────────────────
+const HR_AI_COLS = ['category', 'tags', 'note', 'pub_date', 'orig_title', 'ai_status', 'ai_date'];
 async function ensureRadar() {
   const cols = await q('radar', 'PRAGMA table_info(memory)');
   if (!cols.length) throw new Error('Ebben az adatbázisban nincs „memory" tábla – ez nem a radar_memory.db?');
   const names = cols.map(r => r[1]);
   if (!names.includes('protected')) { try { await HR.exec({ db: 'radar', sql: 'ALTER TABLE memory ADD COLUMN protected INTEGER DEFAULT 0' }); } catch { /* nem végzetes */ } }
   if (!names.includes('custom_tags')) { try { await HR.exec({ db: 'radar', sql: "ALTER TABLE memory ADD COLUMN custom_tags TEXT DEFAULT ''" }); } catch { /* nem végzetes */ } }
+  // v5.6: a HunterBot „Radar AI” mezői (a BM bookmarks.db-vel azonos nevek: category, tags, note)
+  for (const n of HR_AI_COLS) {
+    if (!names.includes(n)) { try { await HR.exec({ db: 'radar', sql: `ALTER TABLE memory ADD COLUMN ${n} TEXT DEFAULT ''` }); } catch { /* nem végzetes */ } }
+  }
   // gyorsító index (egyszeri): a státusz szerinti számlálás és szűrés nagy táblán is gyors marad
   try {
     const ix = await qVal('radar', "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memory_status'");
@@ -470,10 +475,14 @@ async function getTriRecord(id) {
 }
 async function getRecord(id) {
   if (viewMode === 'tri') return getTriRecord(id);
-  const rows = await q('radar', `SELECT rowid, url, source, title, status, add_date, protected, custom_tags FROM memory WHERE rowid = ${rid(id)}`);
+  const rows = await q('radar', `SELECT rowid, url, source, title, status, add_date, protected, custom_tags, category, tags, note, pub_date, orig_title, ai_status FROM memory WHERE rowid = ${rid(id)}`);
   if (!rows.length) return null;
   const r = rows[0];
-  const rec = { id: r[0], url: r[1] || '', source: r[2] || '', title: r[3] || '', status: r[4] || 'SEEN', date: r[5] || '', prot: r[6] ? 1 : 0, tags: r[7] || '', tri: null };
+  const aiOk = (r[13] || '') === 'OK';
+  const rec = { id: r[0], url: r[1] || '', source: r[2] || '', title: r[3] || '', status: r[4] || 'SEEN', date: r[5] || '', prot: r[6] ? 1 : 0, tags: r[7] || '', tri: null,
+    // v5.6: HunterBot AI-adatok
+    aiCat: aiOk ? (r[8] || '') : '', aiTags: aiOk ? (r[9] || '') : '', aiNote: aiOk ? (r[10] || '') : '',
+    pubDate: r[11] || '', origTitle: r[12] || '', aiStatus: r[13] || '' };
   rec.tri = await getTri(rec.url);
   return rec;
 }
@@ -541,7 +550,7 @@ function paintCard(r) {
   refreshOpenBtn(r);
   $('card-content').style.display = 'block'; $('empty-state').style.display = 'none';
   $('card-domain').textContent = (r.source || '–').toUpperCase();
-  $('card-date').textContent = r.date || '–';
+  $('card-date').textContent = (r.pubDate || r.date || '–').slice(0, 10);
 
   let si = '';
   if (r.prot) si += '🔒';
@@ -555,7 +564,19 @@ function paintCard(r) {
   if (tl.length) { tagsEl.innerHTML = tl.map(t => `<span class="tag-chip">${esc(t)}</span>`).join(''); tagsEl.style.display = 'flex'; }
   else { tagsEl.innerHTML = ''; tagsEl.style.display = 'none'; }
 
-  $('card-title').textContent = r.title || '(nincs cím)';
+  $('card-title').textContent = r.origTitle || r.title || '(nincs cím)';
+  // v5.6: HunterBot összefoglaló, kategória, AI-címkék
+  const aiEl = $('card-ai');
+  if (r.aiNote || r.aiCat) {
+    const at = String(r.aiTags || '').split(',').map(t => t.trim()).filter(Boolean);
+    aiEl.innerHTML = (r.aiCat ? `<div class="ai-cat">📂 ${esc(r.aiCat)}</div>` : '') +
+      (r.aiNote ? `<div class="ai-note">${esc(r.aiNote)}</div>` : '') +
+      (at.length ? `<div class="ai-tags">${at.map(t => `<span class="ai-tag">${esc(t)}</span>`).join('')}</div>` : '');
+    aiEl.style.display = 'block';
+  } else if (r.aiStatus && r.aiStatus.startsWith('HIBA')) {
+    aiEl.innerHTML = `<div class="ai-err">⚠ Nincs AI-összefoglaló: ${esc(r.aiStatus.slice(5).trim())}</div>`;
+    aiEl.style.display = 'block';
+  } else { aiEl.innerHTML = ''; aiEl.style.display = 'none'; }
   $('card-url').textContent = r.url ? (r.url.length > 140 ? r.url.slice(0, 140) + '…' : r.url) : '';
 
   const tri = r.tri; let th = '';
@@ -1152,7 +1173,7 @@ $('exp-run-btn').onclick = async () => {
     const bmCols = await q('bm', 'PRAGMA table_info(bookmarks)');
     if (!bmCols.length) throw new Error('A bookmarks.db-ben nincs „bookmarks" tábla');
     const bmNames = bmCols.map(c => c[1]);
-    const items = await q('radar', "SELECT rowid, url, source, title, status, add_date, protected, custom_tags FROM memory WHERE status IN ('MARKED','READING')");
+    const items = await q('radar', "SELECT rowid, url, source, title, status, add_date, protected, custom_tags, category, tags, note, pub_date, orig_title, ai_status FROM memory WHERE status IN ('MARKED','READING')");
     if (!items.length) { toast('Nincs exportálható cikk'); return; }
 
     // melyik cikk szerepel már a BM-ben
@@ -1166,7 +1187,10 @@ $('exp-run-btn').onclick = async () => {
     const cmap = await getCmap();
     const today = dateStr();
     const ops = []; let ins = 0, upd = 0, skip = 0;
-    for (const [, url, source, title, status, addDate, prot, ctags] of items) {
+    for (const [, url, source, rssTitle, status, addDate, prot, ctags, aiCat, aiTags, aiNote, pubDate, origTitle, aiStatus] of items) {
+      // v5.6: a HunterBot AI-adatai a BM azonos nevű mezőibe kerülnek
+      const aiOk = (aiStatus || '') === 'OK';
+      const title = origTitle || rssTitle;
       const isRead = status === 'READING' ? 1 : 0;
       const tags = normalizeTags(ctags || '', cmap);
       const ex = existing.get(url);
@@ -1178,14 +1202,21 @@ $('exp-run-btn').onclick = async () => {
         sets.push('protected = MAX(COALESCE(protected, 0), ?)'); params.push(prot ? 1 : 0);
         sets.push('is_read = ?'); params.push(isRead);
         if (updateMode) { sets.push('status = ?'); params.push(BM_STATUS); }
+        if (updateMode && aiOk) {                 // v5.6: frissítésnél az AI-adatok is átmennek
+          for (const [col, val] of [['category', aiCat], ['tags', aiTags], ['note', aiNote]]) {
+            if (val && bmNames.includes(col)) { sets.push(`${col} = ?`); params.push(val); }
+          }
+        }
         if (tagSet) { sets.push('custom_tags = ?'); params.push(merged); }
         params.push(url);
         ops.push({ sql: `UPDATE bookmarks SET ${sets.join(', ')} WHERE url = ?`, params });
         if (updateMode) upd++; else skip++;
       } else {
         ops.push(bmInsertOp(bmCols, {
-          category: source, title: title || '', domain: domainOf(url, source), url, tags: '', custom_tags: tags,
-          status: BM_STATUS, add_date: addDate || today, protected: prot ? 1 : 0, local_path: '', note: '', is_read: isRead, pending_delete: '',
+          category: (aiOk && aiCat) ? aiCat : source, title: title || '', domain: domainOf(url, source), url,
+          tags: aiOk ? (aiTags || '') : '', custom_tags: tags,
+          status: BM_STATUS, add_date: pubDate || addDate || today, protected: prot ? 1 : 0, local_path: '',
+          note: aiOk ? (aiNote || '') : '', is_read: isRead, pending_delete: '',
         }));
         ins++;
       }

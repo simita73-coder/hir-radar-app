@@ -1,8 +1,14 @@
-# Hír-Radar Mobil (Android, v5.5.1)
+# Hír-Radar Mobil (Android, v5.6)
 
 A `hr_mobil_v4.0.html` (Hír-Radar cikkválogató) és a `triage_mobil_v1_0.html` (döntés + indoklás naplózás) egyesítése,
 natív SQLite-tal: a telefon tárhelyén lévő adatbázisokat közvetlenül olvassa és írja, nincs fájlválasztás, export vagy kézi visszamásolás.
 Mega nincs benne: az asztali adatbázisokat te másolod a telefonra, az összevonást (v5.1-től) az app maga végzi (lásd lent).
+
+## Újdonságok a v5.6-ban
+- **📰 HunterBot AI-adatok** (a HunterBot v1.27 „Radar AI” feldolgozásából): a radar_memory.db új mezői – `category`, `tags`, `note` (ugyanazok a nevek és jelentések, mint a BM bookmarks.db-ben), valamint `pub_date` (megjelenés napja), `orig_title` (valódi cím), `ai_status`, `ai_date`. Megnyitáskor a régi fájl automatikusan megkapja ezeket az oszlopokat.
+- **Kártya:** a cím helyén a valódi cím, a dátum a megjelenés napja (ha ismert); a cím alatt lila keretben a kategória, a 3-5 mondatos összefoglaló és az AI-címkék (szaggatott keret – a saját 🏷 címkéid továbbra is felül, a megszokott módon). Ha a cikket nem sikerült feldolgozni, egy sor jelzi az okát.
+- **🔀 Összevonás:** az AI-mezők is átjönnek (új cikknél mind; közös cikknél a sikeresen feldolgozott, frissebb oldal adatai egyben – mint a DB Kezelő v4.2-ben). Az előnézet mutatja, hány cikk kap AI-adatot. A Triage AI „📦 Megmaradtak kiírása” gombja `…_maradek/radar_memory.db` mappát készít – ezt a mappát add meg az összevonásnál.
+- **📤 Mentés a BM-be:** új könyvjelzőnél a kategória az AI-kategória (ha nincs, a forrás neve, mint eddig), a `tags` az AI-címkék, a `note` az összefoglaló, a cím a valódi cím, a dátum a megjelenés napja. „Frissítés” módban a meglévő könyvjelző kategóriája, címkéi és jegyzete is frissül.
 
 ## Újdonságok a v5.5.1-ben
 - **Címkejavaslatok új sorrendje:** pontos egyezés, utána az **egy szavas** címkék (előbb amelyek a begépelt szöveggel kezdődnek, pl. `bal` → baleset, balaton; majd amelyek tartalmazzák), végül a többszavas címkék (ugyanígy). Egy csoporton belül a gyakoribb van elöl. A **➕ új** elem a lista végére került. Ez a felső címkekeresőre is érvényes.

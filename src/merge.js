@@ -119,6 +119,9 @@ export function triageResolve(ra, rb) {
   return res;
 }
 
+// v5.6: a HunterBot „Radar AI” mezői (a DB Kezelő v4.2 szabálya: a sikeres, frissebb oldal nyer, egyben)
+const HR_AI_COLS = ['category', 'tags', 'note', 'pub_date', 'orig_title', 'ai_status', 'ai_date'];
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Összevonás az adatbázisokban (SQL + kis JS)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -188,7 +191,17 @@ export function createMerge(env) {
     const conflict = `COALESCE(NULLIF(m.status, ''), 'SEEN') <> COALESCE(NULLIF(${X.status}, ''), 'SEEN')
       OR (COALESCE(m.protected, 0) <> 0) <> (COALESCE(${X.protected}, 0) <> 0)`;
     const hasFlD = await hasTable('radar', ATT, 'fetch_log');
-    return { X, differs, conflict, hasFlD };
+    // v5.6: a HunterBot „Radar AI” mezői – a telefon fájlja is megkapja őket, ha még nincsenek
+    const mc = await colNames('radar', 'main', 'memory');
+    for (const n of HR_AI_COLS) {
+      if (!mc.includes(n)) await HR.exec({ db: 'radar', sql: `ALTER TABLE main.memory ADD COLUMN ${n} TEXT DEFAULT ''` });
+    }
+    const AIX = Object.fromEntries(HR_AI_COLS.map(n => [n, dc.includes(n) ? `COALESCE(x.${n}, '')` : "''"]));
+    const hasAiD = dc.includes('ai_status');
+    // közös cikk, ahol az asztali AI-adat a jobb: az asztali OK, a telefoné nem OK vagy régebbi
+    const aiBetter = hasAiD ? `COALESCE(x.ai_status, '') = 'OK' AND (COALESCE(m.ai_status, '') <> 'OK'
+      OR COALESCE(x.ai_date, '') > COALESCE(m.ai_date, ''))` : '0';
+    return { X, differs, conflict, hasFlD, AIX, hasAiD, aiBetter };
   }
   const FL_GROUP = s => `SELECT timestamp, feed_name, count, COUNT(*) AS n FROM ${s}.fetch_log GROUP BY timestamp, feed_name, count`;
   const FL_MISSING = `FROM (${FL_GROUP(ATT)}) b LEFT JOIN (${FL_GROUP('main')}) a
@@ -224,6 +237,8 @@ export function createMerge(env) {
     const pdB = await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory x WHERE COALESCE(NULLIF(${c.X.status}, ''), 'SEEN') = 'DELETED' AND COALESCE(${c.X.protected}, 0) <> 0`);
     const diff = await qVal('radar', `SELECT COUNT(*) FROM main.memory m CROSS JOIN ${ATT}.memory x ON x.url = m.url WHERE ${c.differs}`);
     const conf = await qVal('radar', `SELECT COUNT(*) FROM main.memory m CROSS JOIN ${ATT}.memory x ON x.url = m.url WHERE ${c.conflict}`);
+    const aiNew = c.hasAiD ? await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory x WHERE ${ONLY_B} AND COALESCE(x.ai_status, '') = 'OK'`) : 0;
+    const aiUpd = c.hasAiD ? await qVal('radar', `SELECT COUNT(*) FROM main.memory m CROSS JOIN ${ATT}.memory x ON x.url = m.url WHERE ${c.aiBetter}`) : 0;
     let fl = '';
     if (c.hasFlD) {
       const flA = (await hasTable('radar', 'main', 'fetch_log')) ? await qVal('radar', 'SELECT COUNT(*) FROM main.fetch_log') : 0;
@@ -237,6 +252,7 @@ export function createMerge(env) {
       nDec >= 0 ? `🧠 A triage-ban már eldöntött, ezért <b>kimarad</b>: <b>${fmt(skipped)}</b> asztali cikk (a telefon triage.db-jében ${fmt(nDec)} döntés van)`
         : (skipOn() ? '⚠️ A telefon triage.db-je nincs megnyitva, ezért a „már eldöntött cikkek kihagyása” nem működik' : ''),
       `Eltérő közös cikk: <b>${fmt(diff)}</b> (ebből státusz/védelem eltér: <b>${fmt(conf)}</b> – a szabály dönt)`,
+      c.hasAiD ? `📰 AI-adat (HunterBot): új cikkekkel <b>${fmt(aiNew)}</b> · közös cikkeknél pótolva/frissítve <b>${fmt(aiUpd)}</b>` : '',
       pdA + pdB ? `🔧 Védett és egyben 🗑 sor (nem lehet): telefon <b>${fmt(pdA)}</b> · asztali <b>${fmt(pdB)}</b> → 🟢 újra javul` : '', fl].filter(Boolean);
     } finally { await dropDecided(); }
   }
@@ -252,10 +268,11 @@ export function createMerge(env) {
       const n0 = await qVal('radar', 'SELECT COUNT(*) FROM main.memory');
       if (nDec >= 0) res.skipped = await qVal('radar', `SELECT COUNT(*) FROM ${ATT}.memory x WHERE ${ONLY_B} AND ${IS_DECIDED}`);
       const stX = `COALESCE(NULLIF(${X.status}, ''), 'SEEN')`;
-      await run('radar', `INSERT INTO main.memory (url, source, title, status, add_date, protected, custom_tags)
+      await run('radar', `INSERT INTO main.memory (url, source, title, status, add_date, protected, custom_tags, ${HR_AI_COLS.join(', ')})
         SELECT x.url, COALESCE(${X.source}, ''), COALESCE(${X.title}, ''),
                CASE WHEN COALESCE(${X.protected}, 0) <> 0 AND ${stX} = 'DELETED' THEN 'SEEN' ELSE ${stX} END, COALESCE(${X.add_date}, ''),
-               CASE WHEN COALESCE(${X.protected}, 0) <> 0 THEN 1 ELSE 0 END, COALESCE(${X.tags}, '')
+               CASE WHEN COALESCE(${X.protected}, 0) <> 0 THEN 1 ELSE 0 END, COALESCE(${X.tags}, ''),
+               ${HR_AI_COLS.map(n => c.AIX[n]).join(', ')}
         FROM ${ATT}.memory x WHERE ${ONLY_B}${nDec >= 0 ? ` AND NOT ${IS_DECIDED}` : ''}`);
       res.inserted = (await qVal('radar', 'SELECT COUNT(*) FROM main.memory')) - n0;
       log(`  új cikk az asztaliról: ${fmt(res.inserted)}${nDec >= 0 ? ` (kihagyva, a triage-ban már eldöntött: ${fmt(res.skipped)})` : ''}`);
@@ -288,6 +305,15 @@ export function createMerge(env) {
         if (rows.length < CHUNK) break;
       }
       log(`  közös cikk frissítve: ${fmt(res.updated)} (státusz: ${fmt(res.statusChanged)}, címke: ${fmt(res.tagsChanged)})`, 2);
+
+      // 2a) v5.6: AI-adatok (HunterBot) a közös cikkeknél – a sikeres, frissebb oldal adatai egyben jönnek
+      if (c.hasAiD) {
+        const sets = HR_AI_COLS.map(n => `${n} = (SELECT ${c.AIX[n]} FROM ${ATT}.memory x WHERE x.url = memory.url)`).join(', ');
+        const ai = await run('radar', `UPDATE main.memory SET ${sets}
+          WHERE url IN (SELECT m.url FROM main.memory m CROSS JOIN ${ATT}.memory x ON x.url = m.url WHERE ${c.aiBetter})`);
+        res.aiUpdated = ai.changes || 0;
+        log(`  AI-adat (HunterBot) pótolva/frissítve közös cikknél: ${fmt(res.aiUpdated)}`);
+      }
 
       // 2b) védett és egyben 🗑 sor nem létezhet (azonos sorokat a 2. lépés nem néz): 🟢 újra javul, a védelem marad
       const fx = await run('radar', "UPDATE main.memory SET status = 'SEEN' WHERE status = 'DELETED' AND COALESCE(protected, 0) <> 0");
